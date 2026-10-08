@@ -1,2 +1,6 @@
 node_modules/
 *.tgz
+
+# 本地开发过程文档：只在本机保留，不随仓库同步（术语表与 ADR）。
+/CONTEXT.md
+/docs/adr/
