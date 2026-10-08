@@ -1,4 +1,4 @@
-# dsh-plan-spend
+# @chi-hong22/dsh-plan-spend
 
 DSH 用量弹窗插件：在 Web GUI 的全局浮层里放一个「用量」按钮，点开显示**已配置服务商**的套餐花销。
 

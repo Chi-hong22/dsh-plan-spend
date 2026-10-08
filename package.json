@@ -1,8 +1,8 @@
 {
-  "name": "dsh-plan-spend",
+  "name": "@chi-hong22/dsh-plan-spend",
   "version": "0.1.0",
   "private": true,
-  "description": "Usage Meter: an openable popup showing the configured providers' plan spend — DeepSeek official balance and OpenCode Go 5h/weekly/monthly quota — as an out-of-tree DeepSeek Harness plugin bundle",
+  "description": "DSH Web GUI plan-spend popup: shows the configured providers' plan spend — DeepSeek official balance and OpenCode Go 5h/weekly/monthly quota — as an out-of-tree DeepSeek Harness plugin bundle",
   "type": "module",
   "main": "index.js",
   "exports": {

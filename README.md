@@ -1,4 +1,4 @@
-# dsh-plan-spend
+# @chi-hong22/dsh-plan-spend
 
 A usage popup for the DSH Web GUI: one "Usage" chip in the frame-wide overlay
 opens a panel showing the plan spend of the **configured** providers.
