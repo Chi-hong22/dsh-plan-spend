@@ -181,7 +181,7 @@ function createSidebarDom({
 }
 
 /** Loads the plugin body and drives both registered components. */
-function mountPlugin(storage, dom = createSidebarDom()) {
+function mountPlugin(storage, dom = createSidebarDom(), options = {}) {
   const react = createReactDispatcher()
   // Timers and fetch are handed to the body, not taken from the globals: a real
   // setInterval would keep the test process alive after the run.
@@ -189,7 +189,7 @@ function mountPlugin(storage, dom = createSidebarDom()) {
   let timerId = 0
   const setIntervalStub = (callback, ms) => { const id = ++timerId; timers.set(id, { callback, ms }); return id }
   const clearIntervalStub = (id) => { timers.delete(id) }
-  const fetchStub = () => Promise.reject(new Error('offline in tests'))
+  const fetchStub = options.fetch || (() => Promise.reject(new Error('offline in tests')))
 
   const doc = createDocumentStub()
   const factory = new Function(
@@ -207,8 +207,23 @@ function mountPlugin(storage, dom = createSidebarDom()) {
       registered[definition.name] = { definition, component }
     },
   }
+  // A locale stub that actually resolves: `bind` reads whichever dictionary the
+  // plugin registered for the active language, so tests can assert real copy.
+  const dictionaries = new Map()
+  const activeLanguage = options.language || 'zh'
+  const locale = {
+    register: (ns, language, dictionary) => { dictionaries.set(language, dictionary) },
+    bind: () => (key) => {
+      const dictionary = dictionaries.get(activeLanguage)
+      return dictionary && dictionary[key] !== undefined ? dictionary[key] : key
+    },
+    getSnapshot: () => ({ active: activeLanguage, revision: 1 }),
+  }
+  // The account namespace is optional in a composition, so it is offered the way
+  // the runtime offers it: as `remote.account`, or under its own dotted key.
+  const services = { slots, locale }
   plugin.apply({
-    get: (name) => (name === 'slots' ? slots : null),
+    get: (name) => services[name] || null,
     effect: (fn) => { fn(); return () => {} },
   })
 
@@ -584,4 +599,148 @@ test('the rail ignores the measured insets and centres the glyph', () => {
 
   assert.equal(harness.trigger.tree.props.style, undefined, 'the rail keeps its own centred box')
   assert.equal(harness.trigger.tree.props.children[1], null)
+})
+
+/** Expands every function component in an element tree, so its text is reachable. */
+function expandTree(node) {
+  if (node === null || node === undefined) return node
+  if (Array.isArray(node)) return node.map(expandTree)
+  if (typeof node !== 'object' || node === null) return node
+  const element = typeof node.type === 'function' ? expandTree(node.type(node.props)) : node
+  if (element === null || typeof element !== 'object' || Array.isArray(element)) return element
+  const children = element.props ? element.props.children : undefined
+  if (children === undefined) return element
+  return Object.assign({}, element, { props: Object.assign({}, element.props, { children: expandTree(children) }) })
+}
+
+/** Every string in an element tree, in document order. */
+function collectText(node, out = []) {
+  if (typeof node === 'string') { out.push(node); return out }
+  if (Array.isArray(node)) { for (const child of node) collectText(child, out); return out }
+  if (node && typeof node === 'object') collectText(node.props ? node.props.children : null, out)
+  return out
+}
+
+function panelText(harness) {
+  return collectText(expandTree(panelOf(harness))).join(' ')
+}
+
+/** Lets the panel's single async source settle and re-render. */
+function flush() {
+  return new Promise((resolve) => setTimeout(resolve, 0))
+}
+
+function snapshotOf(cards) {
+  return () => Promise.resolve({
+    ok: true,
+    json: () => Promise.resolve({ generatedAt: 1_700_000_000_000, cards }),
+  })
+}
+
+/** Opens the panel against a fixed snapshot. */
+function openWithSnapshot(cards) {
+  const harness = mountPlugin(createStorage(), createSidebarDom(), { fetch: snapshotOf(cards) })
+  harness.installDom()
+  harness.settle()
+  harness.openPanel()
+  return harness
+}
+
+test('the account card renders the recharge balance and nothing else', async () => {
+  const harness = openWithSnapshot([
+    {
+      id: 'deepseek-official',
+      displayName: 'DeepSeek 官方',
+      source: 'account',
+      configured: true,
+      data: { kind: 'balance', label: 'balance.recharge', wallets: [{ currency: 'CNY', total: '12.34' }] },
+    },
+  ])
+  await flush()
+
+  const text = panelText(harness)
+  assert.match(text, /账号登录/)
+  assert.match(text, /充值余额/)
+  assert.match(text, /12\.34/)
+  assert.doesNotMatch(text, /赠/, '赠金 never reaches a card')
+  assert.doesNotMatch(text, /充值 ¥/, 'the account card carries no topped-up split')
+})
+
+test('the API-key card keeps its total and topped-up split', async () => {
+  const harness = openWithSnapshot([
+    {
+      id: 'deepseek-official',
+      displayName: 'DeepSeek 官方',
+      source: 'api-key',
+      configured: true,
+      data: {
+        kind: 'balance',
+        label: 'balance.total',
+        wallets: [{ currency: 'CNY', total: '3.17', toppedUp: '2.67' }],
+      },
+    },
+  ])
+  await flush()
+
+  const text = panelText(harness)
+  assert.match(text, /API Key/)
+  assert.match(text, /总余额/)
+  assert.match(text, /3\.17/)
+  assert.match(text, /充值 ¥2\.67/)
+})
+
+test('a failing API-key read reports the credential layer and its writability', async () => {
+  const harness = openWithSnapshot([
+    {
+      id: 'deepseek-official',
+      displayName: 'DeepSeek 官方',
+      source: 'api-key',
+      configured: true,
+      error: 'HTTP 401',
+      credentialSource: 'environment',
+      credentialWritable: false,
+    },
+  ])
+  await flush()
+
+  const text = panelText(harness)
+  assert.match(text, /HTTP 401/)
+  assert.match(text, /来源：environment/)
+  assert.match(text, /只读/)
+})
+
+test('a failed account query is reported once on the fallback card', async () => {
+  const harness = openWithSnapshot([
+    {
+      id: 'deepseek-official',
+      displayName: 'DeepSeek 官方',
+      source: 'api-key',
+      configured: true,
+      accountError: 'HTTP 429',
+      data: { kind: 'balance', label: 'balance.total', wallets: [{ currency: 'CNY', total: '3.17' }] },
+    },
+  ])
+  await flush()
+
+  const text = panelText(harness)
+  assert.match(text, /3\.17/)
+  assert.match(text, /账号余额读取失败：HTTP 429/)
+  assert.equal(text.split('账号余额读取失败').length - 1, 1, 'the note is written once')
+})
+
+test('host cards render as sent, including the quota windows', async () => {
+  const harness = openWithSnapshot([
+    {
+      id: 'opencode-go',
+      displayName: 'OpenCode Go',
+      configured: true,
+      data: { kind: 'quota-windows', windows: [{ id: 'rolling', status: 'ok', percent: 5, resetsAt: null }] },
+    },
+  ])
+  await flush()
+
+  const text = panelText(harness)
+  assert.match(text, /OpenCode Go/)
+  assert.match(text, /5 小时/)
+  assert.match(text, /5%/)
 })

@@ -27,7 +27,9 @@
  *
  * --- Where the numbers come from ---
  * `GET /usage-meter/snapshot` on the harness web server, owned by this plugin's
- * host half. No credential ever reaches this file.
+ * host half, which also decides which route answered: the signed-in DeepSeek
+ * account's login grant, or the `DEEPSEEK_API_KEY` fallback. No credential ever
+ * reaches this file, and 赠金 is never part of any card.
  */
 const UM_ROUTE = '/usage-meter/snapshot'
 const UM_REFRESH_MS = 60_000
@@ -108,6 +110,11 @@ function formatClock(ms) {
   const date = new Date(ms)
   const pad = (value) => String(value).padStart(2, '0')
   return `${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}`
+}
+
+/** Message text of a thrown value, without assuming it is an Error. */
+function errorText(error) {
+  return error && error.message ? error.message : String(error)
 }
 
 /** Percent → accent token, so a nearly exhausted allowance reads at a glance. */
@@ -238,11 +245,12 @@ function BalanceBody(props) {
   return React.createElement('div', { className: 'um-balances' },
     wallets.map((wallet) => React.createElement('div', { className: 'um-balance', key: wallet.currency || 'default' },
       React.createElement('div', { className: 'um-balance-total' },
-        React.createElement('span', { className: 'um-balance-label' }, t('balance.total')),
+        React.createElement('span', { className: 'um-balance-label' }, t(data.label || 'balance.total')),
         React.createElement('span', { className: 'um-balance-amount' }, formatAmount(wallet.total, wallet.currency))),
-      React.createElement('div', { className: 'um-balance-split' },
-        React.createElement('span', null, t('balance.toppedUp') + ' ' + formatAmount(wallet.toppedUp, wallet.currency)),
-        React.createElement('span', null, t('balance.granted') + ' ' + formatAmount(wallet.granted, wallet.currency))),
+      typeof wallet.toppedUp === 'string'
+        ? React.createElement('div', { className: 'um-balance-split' },
+          React.createElement('span', null, t('balance.toppedUp') + ' ' + formatAmount(wallet.toppedUp, wallet.currency)))
+        : null,
     )),
     data.isAvailable === false
       ? React.createElement('div', { className: 'um-warn' }, t('balance.unavailable'))
@@ -287,6 +295,19 @@ function QuotaBody(props) {
   )
 }
 
+/**
+ * Which layer supplies the API key, and whether this surface could change it.
+ * Shown only when the card has something to explain — a failed or missing
+ * credential — because that is the case this exists for.
+ */
+function credentialHint(card, t) {
+  if (card.source !== 'api-key') return ''
+  if (!card.error && card.configured) return ''
+  if (typeof card.credentialSource !== 'string' || card.credentialSource === '') return ''
+  const text = t('source.from').replace('{source}', card.credentialSource)
+  return card.credentialWritable === false ? text + ' · ' + t('source.readonly') : text
+}
+
 function ProviderCard(props) {
   const { card, t, now } = props
   let body
@@ -301,9 +322,20 @@ function ProviderCard(props) {
   } else {
     body = React.createElement(QuotaBody, { data: card.data, t, now })
   }
+  const sourceLabel = card.source === 'account'
+    ? t('source.account')
+    : card.source === 'api-key' ? t('source.apiKey') : ''
+  const hint = credentialHint(card, t)
+  const accountNote = typeof card.accountError === 'string'
+    ? t('source.accountFailed').replace('{error}', card.accountError)
+    : ''
   return React.createElement('section', { className: 'um-card' + (card.configured ? '' : ' um-card-off') },
-    React.createElement('h4', { className: 'um-card-title' }, card.displayName),
+    React.createElement('h4', { className: 'um-card-title' },
+      card.displayName,
+      sourceLabel ? React.createElement('span', { className: 'um-card-source' }, sourceLabel) : null),
     body,
+    hint ? React.createElement('div', { className: 'um-card-hint' }, hint) : null,
+    accountNote ? React.createElement('div', { className: 'um-card-hint' }, accountNote) : null,
   )
 }
 
@@ -397,10 +429,16 @@ function UsagePanel(props) {
 
   const load = React.useCallback((force) => {
     setState((previous) => ({ ...previous, phase: 'loading' }))
+    // One source: the host half reads both routes and decides which one the
+    // DeepSeek card speaks for, so this half only renders what it is told.
     fetch(UM_ROUTE + (force ? '?refresh=1' : ''), { headers: { accept: 'application/json' } })
-      .then((response) => (response.ok ? response.json() : Promise.reject(new Error('HTTP ' + response.status))))
-      .then((data) => setState({ phase: 'ready', data, error: null }))
-      .catch((error) => setState({ phase: 'failed', data: null, error: error && error.message ? error.message : String(error) }))
+      .then(
+        (response) => (response.ok ? response.json() : Promise.reject(new Error('HTTP ' + response.status))),
+      )
+      .then(
+        (data) => setState({ phase: 'ready', data, error: null }),
+        (error) => setState({ phase: 'failed', data: null, error: errorText(error) }),
+      )
   }, [])
 
   React.useEffect(() => {
@@ -589,9 +627,14 @@ const ZH_DICT = {
   'panel.none': '没有已配置的服务商凭据。',
   'card.notConfigured': '未配置凭据，已跳过。',
   'card.noData': '无数据。',
+  'source.account': '账号登录',
+  'source.apiKey': 'API Key',
+  'source.from': '来源：{source}',
+  'source.readonly': '只读',
+  'source.accountFailed': '账号余额读取失败：{error}',
   'balance.total': '总余额',
+  'balance.recharge': '充值余额',
   'balance.toppedUp': '充值',
-  'balance.granted': '赠送',
   'balance.empty': '没有余额信息。',
   'balance.unavailable': '余额不足，API 调用可能失败。',
   'window.rolling': '5 小时',
@@ -617,9 +660,14 @@ const EN_DICT = {
   'panel.none': 'No configured provider credentials.',
   'card.notConfigured': 'No credential configured; skipped.',
   'card.noData': 'No data.',
+  'source.account': 'Account sign-in',
+  'source.apiKey': 'API Key',
+  'source.from': 'Source: {source}',
+  'source.readonly': 'read-only',
+  'source.accountFailed': 'Account balance read failed: {error}',
   'balance.total': 'Total',
+  'balance.recharge': 'Recharge balance',
   'balance.toppedUp': 'Topped up',
-  'balance.granted': 'Granted',
   'balance.empty': 'No balance information.',
   'balance.unavailable': 'Balance is insufficient; API calls may fail.',
   'window.rolling': '5 hours',
@@ -651,6 +699,8 @@ const UM_CSS = `
 .um-card { border: .5px solid var(--dsw-alias-border-l1); border-radius: 9px; padding: 9px 11px 11px; background: var(--dsw-alias-bg-base); }
 .um-card-off { opacity: .6; }
 .um-card-title { margin: 0 0 8px; font-size: 12px; font-weight: 600; color: var(--dsw-alias-label-secondary); }
+.um-card-source { margin-left: 6px; font-weight: 400; color: var(--dsw-alias-label-tertiary, var(--dsw-alias-label-secondary)); }
+.um-card-hint { margin-top: 6px; font-size: 11px; color: var(--dsw-alias-label-secondary); word-break: break-word; }
 .um-balances { display: flex; flex-direction: column; gap: 8px; }
 .um-balance-total { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
 .um-balance-label { font-size: 12px; color: var(--dsw-alias-label-secondary); }

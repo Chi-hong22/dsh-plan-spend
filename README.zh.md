@@ -6,8 +6,11 @@ DSH 用量弹窗插件：在 Web GUI 的全局浮层里放一个「用量」按�
 
 | 服务商 | 数据源 | 展示 |
 |---|---|---|
-| DeepSeek 官方 | `GET https://api.deepseek.com/user/balance` | 充值与赠送钱包的总余额（保留服务端精度）、余额是否充足 |
+| DeepSeek 官方 | DeepSeek **账号登录**授权：Host 半包用 `ctx.deepseekAccount.resolveToken` 取授权，带 `x-dsh-auth-token` 请求 `GET https://api.deepseek.com/user/balance`（不需要 API key）；回落到同一接口 + `DEEPSEEK_API_KEY` | 充值余额（保留服务端精度）、兜底卡上的充值拆分、余额是否充足，以及这个数字来自哪条路由 |
 | OpenCode Go | `GET https://opencode.ai/zen/go/v1/usage` | 5 小时 / 7 天 / 每月三个窗口的已用百分比、进度条、重置倒计时 |
+
+**赠金不展示**：赠送额度是促销性质、会过期，不属于套餐额度；API key 兜底卡不再映射
+`granted_balance`，账号卡只读充值钱包 `topped_up_balance`。
 
 **已知限制**：OpenCode Go 的用量接口只返回百分比与重置时间，**不返回已用/上限金额**。所以弹窗里 OpenCode 一栏只有百分比，没有「还剩多少美元」。确切金额只在 OpenCode 控制台可见。
 
@@ -38,6 +41,18 @@ dsh --profile <profile> --dump-config | grep usage-meter
 凭据通过 `ctx.credentials.resolve()` 解析，来源优先级见
 `@deepseek-ai/dsh-credentials-local`（启动环境 → 存储文件 → 项目 `.env` → harness home `.env`）。
 **未配置的服务商不会发起请求**，会显示为「未配置凭据，已跳过」。
+
+API key 那一行是**兜底**：DeepSeek 卡平时由 **Host 半包**向已登录的 DeepSeek 账号读取——
+`ctx.deepseekAccount.resolveToken` 对配置的推理 origin（默认 `https://api.deepseek.com`）发放授权，
+再带 `x-dsh-auth-token` 请求同一个 `/user/balance`，因此不需要 API key，授权也不会下发浏览器。
+账号答不上来时（未登录、该组合没挂账号服务、查询失败），API key 卡顶上并标明自己的路由；
+账号查询失败会在兜底卡上写明原因，因为「未登录」与「查询坏了」在数据里一样、在界面上不该一样。
+
+**刻意不用**账号服务自己的余额查询：它打的是 `platform.deepseek.com`，该站的 WAF 对非浏览器客户端
+返回 HTTP 429，于是只会报告失败而拿不到数字。
+
+API key 读失败或未配置时，卡上还会显示生效凭据的**来源层**与是否可写
+（`ctx.credentials.describe`）——「存了 key 还是 401」几乎都是启动环境里的只读值压过了存储文件。
 
 新增服务商 = 在 `ADAPTERS` 里加一行 + 写一个 reader 函数。
 
@@ -83,6 +98,10 @@ dsh --profile <profile> --dump-config | grep usage-meter
 界面上出现 `button.label`、`panel.title`、`window.rolling` 这类原始键——而数据与布局完全正常，
 只有文案坏掉，极易误判成其它问题。官方客户端半包（如 `dsh-client-ui-sidebar`、
 `dsh-client-ui-cordis`）都导出了 `inject`，照做即可。
+
+Host 半包同样用 `ctx.get` 取账号服务，而不写进 `inject`：
+没挂账号服务的组合仍要能挂上这个浮层，由 API key 卡顶上。
+
 ## 安全边界
 
 - API 密钥只在 Host 半包内使用，**不下发到浏览器**；浏览器只读同源 JSON。
@@ -98,7 +117,8 @@ client.js             构建产物（scripts/build-client.mjs 生成）
 cordis.patch.yml      bundle patch：向 profile 插入一行
 scripts/build-client.mjs
 scripts/probe-sources.ps1   一次性探针：不开插件直接验证两个上游接口
-tests/client-ui.test.mjs    触发器/定位/缩放行为测试（npm test）
+tests/client-ui.test.mjs    触发器/定位/缩放 + 账号路由卡片测试（npm test）
+tests/host-snapshot.test.mjs Host 路由载荷测试（npm test）
 ```
 
 ## License
