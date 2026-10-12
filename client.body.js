@@ -443,6 +443,11 @@ function UsagePanel(props) {
 
   React.useEffect(() => {
     if (!open) return undefined
+    // The component stays mounted while closed, so `now` survives between
+    // openings. Without this the first countdown of a session would be measured
+    // from the mount (or the previous opening) and so read long by the whole
+    // idle period, contradicting the absolute reset clock beside it.
+    setNow(Date.now())
     load(false)
     const refresh = setInterval(() => load(false), UM_REFRESH_MS)
     const tick = setInterval(() => setNow(Date.now()), 30_000)

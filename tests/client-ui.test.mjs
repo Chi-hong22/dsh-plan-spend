@@ -744,3 +744,57 @@ test('host cards render as sent, including the quota windows', async () => {
   assert.match(text, /5 小时/)
   assert.match(text, /5%/)
 })
+
+/**
+ * A Date stand-in with a controllable clock. The body resolves `Date` from the
+ * global scope on every call, so patching it is enough to make a countdown
+ * deterministic without handing the body a clock parameter.
+ */
+function makeTestDate(clock) {
+  const RealDate = globalThis.Date
+  return class TestDate extends RealDate {
+    constructor(...args) {
+      if (args.length === 0) super(clock.value)
+      else super(...args)
+    }
+    static now() { return clock.value }
+  }
+}
+
+test('opening the panel re-reads the clock instead of reusing the mount reading', async () => {
+  // The panel component stays mounted while closed, so its `now` state survives
+  // between openings. A long-lived page therefore opens with a `now` from the
+  // mount; unless the open effect refreshes it, the first countdown is inflated
+  // by the whole idle period.
+  const clock = { value: Date.parse('2026-10-12T06:52:04Z') }
+  const realDate = globalThis.Date
+  globalThis.Date = makeTestDate(clock)
+  try {
+    const harness = mountPlugin(createStorage(), createSidebarDom(), {
+      fetch: snapshotOf([
+        {
+          id: 'opencode-go',
+          displayName: 'OpenCode Go',
+          configured: true,
+          data: {
+            kind: 'quota-windows',
+            windows: [{ id: 'rolling', status: 'ok', percent: 3, resetsAt: '2026-10-12T13:00:00Z' }],
+          },
+        },
+      ]),
+    })
+    harness.installDom()
+    harness.settle()
+
+    // Three idle hours between the mount and the open. The reset is 3h07m away.
+    clock.value = Date.parse('2026-10-12T09:52:04Z')
+    harness.openPanel()
+    await flush()
+
+    const text = panelText(harness)
+    assert.match(text, /3 小时 7 分后重置/)
+    assert.doesNotMatch(text, /6 小时 7 分/, 'the countdown must not include the idle hours')
+  } finally {
+    globalThis.Date = realDate
+  }
+})
