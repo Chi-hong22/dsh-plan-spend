@@ -44,6 +44,13 @@ window.__ModuleLoader__.load({ id: "@chi-hong22/dsh-plan-spend", factory: (requi
  * host half, which also decides which route answered: the signed-in DeepSeek
  * account's login grant, or the `DEEPSEEK_API_KEY` fallback. No credential ever
  * reaches this file, and 赠金 is never part of any card.
+ *
+ * --- Peak / off-peak ---
+ * DeepSeek halves its price outside peak hours, and no endpoint reports which
+ * side of that line the clock is on, so the DeepSeek card derives it here from
+ * the published windows plus the State Council holiday table. A table that no
+ * longer covers the current year is reported on the card instead of quietly
+ * judging every holiday as peak.
  */
 const UM_ROUTE = '/usage-meter/snapshot'
 const UM_REFRESH_MS = 60_000
@@ -124,6 +131,128 @@ function formatClock(ms) {
   const date = new Date(ms)
   const pad = (value) => String(value).padStart(2, '0')
   return `${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}`
+}
+
+/**
+ * DeepSeek's peak-price windows as UTC minutes-of-day, half-open [start, end).
+ * Official wording (api-docs.deepseek.com/quick_start/pricing, read 2026-10-14):
+ * "Peak hours are 01:00 - 04:00 and 06:00 - 10:00 UTC, Monday through Friday,
+ * excluding Chinese public holidays. All other hours are off-peak, including
+ * weekends and Chinese public holidays in full." That is Beijing time
+ * 09:00-12:00 and 14:00-18:00. It is a pricing policy, not a queryable
+ * resource: no endpoint reports the current side of the line.
+ */
+const UM_PEAK_WINDOWS_UTC = [[60, 240], [360, 600]]
+
+/**
+ * How far ahead the next price change is looked for, in days. The longest
+ * continuous off-peak stretch of 2026 is the Spring Festival block, 10.63 days
+ * (2026-02-13T10:00Z → 2026-02-24T01:00Z, measured over the table below), so
+ * this leaves room for a longer merged block without scanning far.
+ */
+const UM_PEAK_LOOKAHEAD_DAYS = 16
+
+/**
+ * The years `UM_CHINA_PUBLIC_HOLIDAYS_UTC` covers. A year missing from this list
+ * is reported on the card rather than guessed at, because the holiday clause of
+ * the rule cannot be answered without it.
+ */
+const UM_HOLIDAY_YEARS = [2026]
+
+/**
+ * Chinese public holidays as UTC date keys (YYYY-MM-DD).
+ *
+ * The whole published block is listed, not only the statutory days: the official
+ * wording excludes "Chinese public holidays" — the published table — and a block
+ * that kept its make-up days at peak price would contradict "Chinese public
+ * holidays in full". Source: 国务院办公厅国办发明电〔2025〕7 号 (2026
+ * arrangement).
+ *
+ * Make-up workdays that land on a weekend (2026-02-14, 02-28, 05-09, 10-10
+ * Saturdays; 01-04, 09-20 Sundays) are deliberately absent: a weekend is
+ * off-peak whether or not it is worked, so no 调休 rule is needed. Append the
+ * next year's dates once the State Council publishes them.
+ */
+const UM_CHINA_PUBLIC_HOLIDAYS_UTC = Object.freeze(new Set([
+  '2026-01-01', '2026-01-02', '2026-01-03',
+  '2026-02-15', '2026-02-16', '2026-02-17', '2026-02-18', '2026-02-19',
+  '2026-02-20', '2026-02-21', '2026-02-22', '2026-02-23',
+  '2026-04-04', '2026-04-05', '2026-04-06',
+  '2026-05-01', '2026-05-02', '2026-05-03', '2026-05-04', '2026-05-05',
+  '2026-06-19', '2026-06-20', '2026-06-21',
+  '2026-09-25', '2026-09-26', '2026-09-27',
+  '2026-10-01', '2026-10-02', '2026-10-03', '2026-10-04', '2026-10-05',
+  '2026-10-06', '2026-10-07',
+]))
+
+/** The card the peak row belongs to: the windows are a DeepSeek property. */
+const UM_PEAK_CARD_ID = 'deepseek-official'
+const UM_DAY_MS = 86_400_000
+
+/** `YYYY-MM-DD` of an instant, in UTC. */
+function utcDateKey(instant) {
+  const date = new Date(instant)
+  const pad = (value) => String(value).padStart(2, '0')
+  return `${date.getUTCFullYear()}-${pad(date.getUTCMonth() + 1)}-${pad(date.getUTCDate())}`
+}
+
+/**
+ * Whether an instant is inside DeepSeek's peak-price window.
+ *
+ * The holiday test comes first, and a weekend is off-peak whether or not it is
+ * worked, so a 调休 workday needs no rule of its own. The windows are compared
+ * half-open, so 04:00:00.000 UTC is already off-peak.
+ */
+function isPeakUtc(instant, holidays = UM_CHINA_PUBLIC_HOLIDAYS_UTC) {
+  if (holidays.has(utcDateKey(instant))) return false
+  const date = new Date(instant)
+  const weekday = date.getUTCDay()
+  if (weekday === 0 || weekday === 6) return false
+  const minute = date.getUTCHours() * 60 + date.getUTCMinutes()
+  for (const window of UM_PEAK_WINDOWS_UTC) {
+    if (minute >= window[0] && minute < window[1]) return true
+  }
+  return false
+}
+
+/**
+ * The next instant the price changes and which way it goes.
+ *
+ * A weekend or holiday has to be skipped as a whole: its 01:00 UTC is not a peak
+ * opening, so testing the clock alone would report a transition that never
+ * happens.
+ */
+function nextPeakTransition(instant, holidays = UM_CHINA_PUBLIC_HOLIDAYS_UTC) {
+  const peakNow = isPeakUtc(instant, holidays)
+  const start = new Date(instant)
+  const year = start.getUTCFullYear()
+  const month = start.getUTCMonth()
+  const day = start.getUTCDate()
+  for (let offset = 0; offset <= UM_PEAK_LOOKAHEAD_DAYS; offset++) {
+    const probe = new Date(Date.UTC(year, month, day + offset))
+    const weekday = probe.getUTCDay()
+    if (weekday === 0 || weekday === 6) continue
+    if (holidays.has(utcDateKey(probe.getTime()))) continue
+    for (const window of UM_PEAK_WINDOWS_UTC) {
+      for (const edge of [[window[0], true], [window[1], false]]) {
+        const at = Date.UTC(year, month, day + offset, 0, edge[0])
+        if (at > instant && edge[1] !== peakNow) return { toPeak: edge[1], at }
+      }
+    }
+  }
+  // Reached only if the table lists an off-peak block longer than the lookahead.
+  // Approximate, but the card keeps rendering instead of throwing.
+  return { toPeak: !peakNow, at: instant + UM_PEAK_LOOKAHEAD_DAYS * UM_DAY_MS }
+}
+
+/**
+ * The year the holiday table no longer covers, or null while it still does.
+ * Without this the table would go stale silently and misjudge every holiday as
+ * peak — the one failure the peak row cannot show by itself.
+ */
+function uncoveredHolidayYear(instant) {
+  const year = new Date(instant).getUTCFullYear()
+  return UM_HOLIDAY_YEARS.indexOf(year) === -1 ? year : null
 }
 
 /** Message text of a thrown value, without assuming it is an Error. */
@@ -322,6 +451,29 @@ function credentialHint(card, t) {
   return card.credentialWritable === false ? text + ' · ' + t('source.readonly') : text
 }
 
+/**
+ * The peak/off-peak row. The windows are a property of the service rather than
+ * of a reading, so it renders even when the balance read failed, and a stale
+ * holiday table is reported beside the state it affects.
+ */
+function PeakRow(props) {
+  const { now, t } = props
+  const peak = isPeakUtc(now)
+  const transition = nextPeakTransition(now)
+  const remaining = countdownText(formatCountdown(transition.at, now), t)
+  const year = uncoveredHolidayYear(now)
+  return React.createElement('div', { className: 'um-peak' },
+    React.createElement('div', {
+      className: 'um-peak-state' + (peak ? ' um-peak-on' : ''),
+      title: t('peak.windows'),
+    }, t(peak ? 'peak.peak' : 'peak.offPeak').replace('{time}', remaining)),
+    year === null
+      ? null
+      : React.createElement('div', { className: 'um-warn' },
+        t('peak.tableStale').replace('{year}', String(year))),
+  )
+}
+
 function ProviderCard(props) {
   const { card, t, now } = props
   let body
@@ -348,6 +500,7 @@ function ProviderCard(props) {
       card.displayName,
       sourceLabel ? React.createElement('span', { className: 'um-card-source' }, sourceLabel) : null),
     body,
+    card.id === UM_PEAK_CARD_ID ? React.createElement(PeakRow, { now, t }) : null,
     hint ? React.createElement('div', { className: 'um-card-hint' }, hint) : null,
     accountNote ? React.createElement('div', { className: 'um-card-hint' }, accountNote) : null,
   )
@@ -662,6 +815,10 @@ const ZH_DICT = {
   'quota.remaining': '{time}后重置',
   'quota.resetsAt': '{time}',
   'quota.noReset': '无重置时间',
+  'peak.peak': '高峰时段 · 距低谷 {time}',
+  'peak.offPeak': '低谷时段 · 距高峰 {time}',
+  'peak.windows': '高峰：周一至周五 09:00–12:00、14:00–18:00（北京时间）；周末与中国法定节假日全天均为低谷',
+  'peak.tableStale': '节假日表未覆盖 {year} 年，峰谷判定可能不准，请补充数据。',
   'reset.daysHours': '{d} 天 {h} 小时',
   'reset.hoursMinutes': '{h} 小时 {m} 分',
   'reset.minutes': '{m} 分钟',
@@ -695,6 +852,10 @@ const EN_DICT = {
   'quota.remaining': 'resets in {time}',
   'quota.resetsAt': '{time}',
   'quota.noReset': 'no reset time',
+  'peak.peak': 'Peak · off-peak in {time}',
+  'peak.offPeak': 'Off-peak · peak in {time}',
+  'peak.windows': 'Peak: Mon–Fri 09:00–12:00 and 14:00–18:00 Beijing time; weekends and Chinese public holidays are off-peak all day',
+  'peak.tableStale': 'The holiday table does not cover {year}, so the peak/off-peak state may be wrong. Please add the dates.',
   'reset.daysHours': '{d}d {h}h',
   'reset.hoursMinutes': '{h}h {m}m',
   'reset.minutes': '{m}m',
@@ -736,6 +897,9 @@ const UM_CSS = `
 .um-muted { font-size: 12px; color: var(--dsw-alias-label-secondary); }
 .um-error { font-size: 12px; color: var(--dsw-alias-state-error-primary, #ef4444); word-break: break-word; }
 .um-warn { margin-top: 8px; font-size: 11px; color: var(--dsw-alias-state-warning-primary, #f59e0b); }
+.um-peak { margin-top: 8px; padding-top: 8px; border-top: .5px solid var(--dsw-alias-border-l1); }
+.um-peak-state { font-size: 11px; color: var(--dsw-alias-label-secondary); font-variant-numeric: tabular-nums; }
+.um-peak-on { color: var(--dsw-alias-state-warning-primary, #f59e0b); }
 .um-resize { position: absolute; right: 0; top: 0; width: 18px; height: 18px; z-index: 2; opacity: .45; cursor: nesw-resize; touch-action: none; transition: opacity 120ms ease; border-right: 2px solid var(--dsw-alias-label-tertiary, #94a3b8); border-top: 2px solid var(--dsw-alias-label-tertiary, #94a3b8); border-top-right-radius: 11px; }
 .um-resize:hover, .um-resize-active { opacity: 1; }
 `

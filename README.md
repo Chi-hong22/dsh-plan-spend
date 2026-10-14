@@ -7,7 +7,7 @@ opens a panel showing the plan spend of the **configured** providers.
 
 | Provider | Source | Rendered |
 |---|---|---|
-| DeepSeek official | the DeepSeek **account sign-in**: the host half asks `ctx.deepseekAccount.resolveToken` for the grant and calls `GET https://api.deepseek.com/user/balance` with `x-dsh-auth-token`; falls back to the same endpoint with `DEEPSEEK_API_KEY` | recharge balance (server precision kept), the topped-up split on the fallback card, the sufficiency flag, and which route the number came from |
+| DeepSeek official | the DeepSeek **account sign-in**: the host half asks `ctx.deepseekAccount.resolveToken` for the grant and calls `GET https://api.deepseek.com/user/balance` with `x-dsh-auth-token`; falls back to the same endpoint with `DEEPSEEK_API_KEY` | recharge balance (server precision kept), the topped-up split on the fallback card, the sufficiency flag, which route the number came from, and the **peak / off-peak** window with its next switch |
 | OpenCode Go | `GET https://opencode.ai/zen/go/v1/usage` | 5-hour / 7-day / monthly used percentage, progress bar, reset countdown |
 
 **赠金 (granted credit) is not shown.** It is promotional and short-lived, so it
@@ -17,6 +17,47 @@ account card reads the recharge wallet (`topped_up_balance`) alone.
 **Known limitation**: the OpenCode Go usage endpoint returns percentages and
 reset instants only — no used/limit amounts. That column is therefore
 percent-only; the exact dollar figures live in the OpenCode console.
+
+## Peak and off-peak (DeepSeek official)
+
+DeepSeek bills two rates, and off-peak is half the peak price, so the DeepSeek
+card carries one more row: whether the current moment is peak or off-peak, and
+how long until the next switch.
+
+There is **no endpoint** that reports the current window — the rule lives in a
+footnote on the pricing page — so this row derives it client-side from the
+published rule:
+
+- **Peak**: Monday–Friday `09:00–12:00` and `14:00–18:00` Beijing time (UTC
+  `01:00–04:00` and `06:00–10:00`), **excluding Chinese public holidays**.
+- **Everything else is off-peak**: `12:00–14:00`, the night, **all weekend**, and
+  **public holidays in full**.
+
+How the derivation is pinned down:
+
+- **Weekends are always off-peak**, so a make-up workday that lands on a Saturday
+  or Sunday needs no extra modelling — the weekend rule already calls it off-peak.
+- The holiday set is therefore the **whole published State Council arrangement**
+  (including workdays folded into a holiday, such as 2 January for New Year), not
+  just the 11 statutory days; otherwise peak would reappear mid-holiday.
+- Lookups use **UTC date keys**: every peak window lies inside UTC `00:00–16:00`
+  and everything outside a window is off-peak, so a UTC-date lookup and a
+  Beijing-date lookup agree.
+- The windows are **half-open**: `04:00:00` sharp is already off-peak.
+
+### The holiday table needs upkeep
+
+The table is `UM_CHINA_PUBLIC_HOLIDAYS_UTC` in `client.body.js` (33 days for
+2026, from State Council notice 国办发明电〔2025〕7 号); the years it covers are
+listed in `UM_HOLIDAY_YEARS`. Each **fourth quarter**, once the State Council
+publishes the next year's arrangement, append that year's date keys and the year
+itself.
+
+When the table does not cover the current year the card says so outright — the
+holiday table does not cover that year, add the data — because in that state
+every weekday statutory holiday would be scored as peak, and **a wrong number
+stated silently is worse than a missing one declared**. A covered year shows no
+notice at all.
 
 ## Install
 

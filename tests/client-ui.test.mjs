@@ -798,3 +798,116 @@ test('opening the panel re-reads the clock instead of reusing the mount reading'
     globalThis.Date = realDate
   }
 })
+
+/** Pins the clock for the duration of `body`, so a rendered countdown is exact. */
+async function withClock(iso, body) {
+  const clock = { value: Date.parse(iso) }
+  const realDate = globalThis.Date
+  globalThis.Date = makeTestDate(clock)
+  try {
+    return await body(clock)
+  } finally {
+    globalThis.Date = realDate
+  }
+}
+
+/** The DeepSeek card payload the peak row rides on. */
+const DEEPSEEK_BALANCE_CARD = {
+  id: 'deepseek-official',
+  displayName: 'DeepSeek 官方',
+  source: 'api-key',
+  configured: true,
+  data: { kind: 'balance', label: 'balance.total', wallets: [{ currency: 'CNY', total: '3.17' }] },
+}
+
+/** Opens the panel on a DeepSeek card with the clock pinned to one instant. */
+function openDeepseekAt(iso) {
+  return withClock(iso, async () => {
+    const harness = openWithSnapshot([DEEPSEEK_BALANCE_CARD])
+    await flush()
+    return harness
+  })
+}
+
+test('the DeepSeek card reports peak hours and the wait for off-peak', async () => {
+  // 2026-10-14 is a Wednesday, and 02:00 UTC is inside the 01:00-04:00 window.
+  const harness = await openDeepseekAt('2026-10-14T02:00:00Z')
+  const text = panelText(harness)
+  assert.match(text, /高峰时段/)
+  assert.match(text, /2 小时 0 分/)
+})
+
+test('off-peak counts down to the next peak opening', async () => {
+  const harness = await openDeepseekAt('2026-10-14T05:00:00Z')
+  const text = panelText(harness)
+  assert.match(text, /低谷时段/)
+  assert.match(text, /1 小时 0 分/)
+})
+
+test('the peak window is half-open: 04:00:00 UTC is already off-peak', async () => {
+  const harness = await openDeepseekAt('2026-10-14T04:00:00Z')
+  assert.match(panelText(harness), /低谷时段/)
+})
+
+test('a weekend is off-peak and the countdown skips to Monday', async () => {
+  // 2026-10-17 is a Saturday; the next peak opening is Monday 01:00 UTC.
+  const harness = await openDeepseekAt('2026-10-17T02:00:00Z')
+  const text = panelText(harness)
+  assert.match(text, /低谷时段/)
+  assert.match(text, /1 天 23 小时/)
+})
+
+test('a make-up workday that lands on a weekend is still off-peak', async () => {
+  // 2026-02-14 is a 调休 Saturday. The weekend rule alone settles it, which is
+  // why the table needs no workday rule; the next peak is after Spring Festival.
+  const harness = await openDeepseekAt('2026-02-14T02:00:00Z')
+  const text = panelText(harness)
+  assert.match(text, /低谷时段/)
+  assert.match(text, /9 天 23 小时/)
+})
+
+test('a public holiday on a weekday is off-peak, and the same weekday after it is peak', async () => {
+  // 2026-10-01 (Thursday, National Day) against 2026-10-08 (Thursday, back at work).
+  const holiday = await openDeepseekAt('2026-10-01T02:00:00Z')
+  assert.match(panelText(holiday), /低谷时段/)
+
+  const workday = await openDeepseekAt('2026-10-08T02:00:00Z')
+  assert.match(panelText(workday), /高峰时段/)
+})
+
+test('the countdown crosses a holiday block instead of landing inside it', async () => {
+  // From inside the National Day block the next peak opening is a week out; a
+  // clock-only walk would have called the next 01:00 UTC a transition.
+  const harness = await openDeepseekAt('2026-10-01T02:00:00Z')
+  assert.match(panelText(harness), /6 天 23 小时/)
+})
+
+test('a table that no longer covers the year is reported on the card', async () => {
+  // 2027-01-04 is a Monday, so the clock alone would say peak; with no 2027 in
+  // the table the holiday clause is unanswerable, and the card says so.
+  const harness = await openDeepseekAt('2027-01-04T02:00:00Z')
+  const text = panelText(harness)
+  assert.match(text, /节假日表未覆盖 2027 年/)
+  assert.match(text, /请补充数据/)
+})
+
+test('a covered year shows no stale notice', async () => {
+  const harness = await openDeepseekAt('2026-10-14T02:00:00Z')
+  assert.doesNotMatch(panelText(harness), /节假日表/)
+})
+
+test('the peak row belongs to the DeepSeek card alone', async () => {
+  const harness = openWithSnapshot([
+    {
+      id: 'opencode-go',
+      displayName: 'OpenCode Go',
+      configured: true,
+      data: { kind: 'quota-windows', windows: [{ id: 'rolling', status: 'ok', percent: 5, resetsAt: null }] },
+    },
+  ])
+  await flush()
+
+  const text = panelText(harness)
+  assert.doesNotMatch(text, /高峰时段/)
+  assert.doesNotMatch(text, /低谷时段/)
+})
