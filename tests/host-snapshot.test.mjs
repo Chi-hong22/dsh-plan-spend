@@ -64,18 +64,18 @@ function routeHarness({ resolve, describe, account }) {
   assert.equal(routes.length, 1)
   const route = routes[0]
   assert.equal(route.kind, 'exact')
-  assert.equal(route.path, '/usage-meter/snapshot')
+  assert.equal(route.path, '/dsh-plan-spend/snapshot')
   return {
     async read(query = '') {
       let payload = null
       const res = { writeHead() {}, end(body) { payload = JSON.parse(body) } }
-      await route.handler({ method: 'GET', url: `/usage-meter/snapshot${query}` }, res)
+      await route.handler({ method: 'GET', url: `/dsh-plan-spend/snapshot${query}` }, res)
       return payload
     },
     async method(method) {
       let status = null
       const res = { writeHead(code) { status = code }, end() {} }
-      await route.handler({ method, url: '/usage-meter/snapshot' }, res)
+      await route.handler({ method, url: '/dsh-plan-spend/snapshot' }, res)
       return status
     },
     route,

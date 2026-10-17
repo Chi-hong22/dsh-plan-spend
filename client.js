@@ -13,7 +13,7 @@ window.__ModuleLoader__.load({ id: "@chi-hong22/dsh-plan-spend", factory: (requi
   };
   module.exports = (() => {
 /**
- * Usage Meter — dynamic Cordis plugin, CLIENT half.
+ * Plan Spend — dynamic Cordis plugin, CLIENT half.
  *
  * The whole file body is the plain-JavaScript function body that returns a
  * Cordis Plugin ({ apply(ctx) { ... } }). No imports / TS / JSX allowed:
@@ -22,7 +22,7 @@ window.__ModuleLoader__.load({ id: "@chi-hong22/dsh-plan-spend", factory: (requi
  *
  * --- Where the UI lives ---
  * Two entries, split because the sidebar clips its own overflow:
- * - `sidebar.footer.action` (id 'usage-meter') holds the trigger. That seat is
+ * - `sidebar.footer.action` (id 'dsh-plan-spend') holds the trigger. That seat is
  *   the sidebar's own action row and hands each entry `{ wide }`, so the button
  *   follows the collapse/expand rail without any listener of ours. The row sits
  *   directly above the shell's account/settings row: `sidebar.settings` is a
@@ -40,7 +40,7 @@ window.__ModuleLoader__.load({ id: "@chi-hong22/dsh-plan-spend", factory: (requi
  * from the button.
  *
  * --- Where the numbers come from ---
- * `GET /usage-meter/snapshot` on the harness web server, owned by this plugin's
+ * `GET /dsh-plan-spend/snapshot` on the harness web server, owned by this plugin's
  * host half, which also decides which route answered: the signed-in DeepSeek
  * account's login grant, or the `DEEPSEEK_API_KEY` fallback. No credential ever
  * reaches this file; the granted bonus arrives as its own wallet row, so the
@@ -53,10 +53,13 @@ window.__ModuleLoader__.load({ id: "@chi-hong22/dsh-plan-spend", factory: (requi
  * longer covers the current year is reported on the card instead of quietly
  * judging every holiday as peak.
  */
-const UM_ROUTE = '/usage-meter/snapshot'
+const UM_ROUTE = '/dsh-plan-spend/snapshot'
 const UM_REFRESH_MS = 60_000
-const UM_SIZE_KEY = 'usage-meter.size'
+const UM_SIZE_KEY = 'dsh-plan-spend.size'
+// Keys from before the identifier rename: the position is dead and only dropped,
+// the size is adopted once so the rename does not reset a user's panel.
 const UM_LEGACY_POSITION_KEY = 'usage-meter.position'
+const UM_LEGACY_SIZE_KEY = 'usage-meter.size'
 const UM_MIN_SIZE = { width: 260, height: 160 }
 const UM_DEFAULT_SIZE = { width: 330, height: 360 }
 const UM_EDGE_MARGIN_PX = 8
@@ -103,11 +106,16 @@ function dropStoredKey(key) {
 }
 
 function readStoredSize() {
-  const stored = readStoredJson(UM_SIZE_KEY)
+  const current = readStoredJson(UM_SIZE_KEY)
+  const stored = current || readStoredJson(UM_LEGACY_SIZE_KEY)
   if (!stored) return null
   const width = Number.isFinite(stored.width) && stored.width > 0 ? stored.width : null
   const height = Number.isFinite(stored.height) && stored.height > 0 ? stored.height : null
-  return width === null && height === null ? null : { width, height }
+  const size = width === null && height === null ? null : { width, height }
+  // Adopt the pre-rename value under the new key; the mount effect then drops the
+  // old one, so clearing the key to reset the panel keeps working.
+  if (size && !current) writeStoredJson(UM_SIZE_KEY, size)
+  return size
 }
 
 function formatCountdown(target, now) {
@@ -603,8 +611,12 @@ function UsagePanel(props) {
     setRevision(store.revision())
   }), [store])
 
-  // The manual-position feature is gone; drop its leftover key once.
-  React.useEffect(() => { dropStoredKey(UM_LEGACY_POSITION_KEY) }, [])
+  // The manual-position feature is gone and the size key was renamed; drop both
+  // leftovers once (the size itself was already adopted in readStoredSize).
+  React.useEffect(() => {
+    dropStoredKey(UM_LEGACY_POSITION_KEY)
+    dropStoredKey(UM_LEGACY_SIZE_KEY)
+  }, [])
 
   const load = React.useCallback((force) => {
     setState((previous) => ({ ...previous, phase: 'loading' }))
@@ -945,10 +957,10 @@ return {
     const locale = ctx.get('locale')
     // Unique per-apply namespace: the locale registry is process-wide and a
     // stale registration of the stable name would throw ("already has locale").
-    const ns = 'usage-meter.' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6)
+    const ns = 'dsh-plan-spend.' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6)
     if (locale) {
-      ctx.effect(() => locale.register(ns, 'zh', ZH_DICT), 'usage-meter: zh dict')
-      ctx.effect(() => locale.register(ns, 'en', EN_DICT), 'usage-meter: en dict')
+      ctx.effect(() => locale.register(ns, 'zh', ZH_DICT), 'dsh-plan-spend: zh dict')
+      ctx.effect(() => locale.register(ns, 'en', EN_DICT), 'dsh-plan-spend: en dict')
     }
     const t = locale ? locale.bind(ns) : ((key) => key)
     const store = makeMeterStore()
@@ -960,7 +972,7 @@ return {
       // panel in the frame-wide overlay beside that column.
       slots.inject('sidebar.footer.action', () => slots.register({
         name: 'sidebar.footer.action',
-        id: 'usage-meter',
+        id: 'dsh-plan-spend',
         order: UM_TRIGGER_ORDER,
       }, (props) => React.createElement(UsageTrigger, {
         t,
@@ -970,12 +982,12 @@ return {
 
       slots.inject('shell.overlay', () => slots.register({
         name: 'shell.overlay',
-        id: 'usage-meter',
+        id: 'dsh-plan-spend',
         order: UM_PANEL_ORDER,
       }, () => React.createElement(UsagePanel, { t, store })))
     }
 
-    ctx.effect(() => styles.insert(UM_CSS), 'usage-meter: styles')
+    ctx.effect(() => styles.insert(UM_CSS), 'dsh-plan-spend: styles')
   },
 }
 

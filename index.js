@@ -30,13 +30,13 @@
  * `configured: false` instead of a request, which is what makes the popup
  * follow the configured providers.
  *
- * Route: `GET /usage-meter/snapshot` (`?refresh=1` bypasses the cache).
+ * Route: `GET /dsh-plan-spend/snapshot` (`?refresh=1` bypasses the cache).
  */
 export const name = 'dsh-plan-spend'
 
 export const inject = ['webServer', 'credentials']
 
-const ROUTE = '/usage-meter/snapshot'
+const ROUTE = '/dsh-plan-spend/snapshot'
 const CACHE_TTL_MS = 30_000
 const REQUEST_TIMEOUT_MS = 15_000
 
@@ -289,5 +289,5 @@ export function apply(ctx) {
         sendJson(res, 500, { error: failureMessage(error) })
       }
     },
-  }), 'usage-meter: snapshot route')
+  }), 'dsh-plan-spend: snapshot route')
 }

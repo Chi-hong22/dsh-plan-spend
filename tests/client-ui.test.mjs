@@ -228,10 +228,10 @@ function mountPlugin(storage, dom = createSidebarDom(), options = {}) {
   })
 
   assert.deepEqual(registered['sidebar.footer.action'].definition, {
-    name: 'sidebar.footer.action', id: 'usage-meter', order: 20,
+    name: 'sidebar.footer.action', id: 'dsh-plan-spend', order: 20,
   })
   assert.deepEqual(registered['shell.overlay'].definition, {
-    name: 'shell.overlay', id: 'usage-meter', order: 30,
+    name: 'shell.overlay', id: 'dsh-plan-spend', order: 30,
   })
 
   function createInstance(name, initialProps) {
@@ -427,7 +427,7 @@ test('dragging the top-right grip grows the panel away from the sidebar and stor
   // The grip is top-right, so outward is right and up.
   dragGrip(harness, { x: 100, y: 100 }, { x: 150, y: 60 })
 
-  assert.equal(storage.raw.get('usage-meter.size'), JSON.stringify({ width: 380, height: 400 }))
+  assert.equal(storage.raw.get('dsh-plan-spend.size'), JSON.stringify({ width: 380, height: 400 }))
   const style = panelOf(harness).props.style
   assert.deepEqual({ width: style.width, height: style.height }, { width: '380px', height: '400px' })
 })
@@ -441,11 +441,11 @@ test('the grip respects the minimum size and the placement bounds', () => {
 
   installPanelBox(harness, { width: 330, height: 360 })
   dragGrip(harness, { x: 0, y: 0 }, { x: -500, y: 500 })
-  assert.equal(storage.raw.get('usage-meter.size'), JSON.stringify({ width: 260, height: 160 }))
+  assert.equal(storage.raw.get('dsh-plan-spend.size'), JSON.stringify({ width: 260, height: 160 }))
 
   installPanelBox(harness, { width: 330, height: 360 })
   dragGrip(harness, { x: 0, y: 0 }, { x: 5000, y: -5000 })
-  assert.equal(storage.raw.get('usage-meter.size'), JSON.stringify({ width: 902, height: 736 }))
+  assert.equal(storage.raw.get('dsh-plan-spend.size'), JSON.stringify({ width: 902, height: 736 }))
 })
 
 test('a grip drag below the threshold stores nothing', () => {
@@ -457,11 +457,11 @@ test('a grip drag below the threshold stores nothing', () => {
   installPanelBox(harness, { width: 330, height: 360 })
 
   dragGrip(harness, { x: 100, y: 100 }, { x: 101, y: 99 })
-  assert.equal(storage.raw.has('usage-meter.size'), false)
+  assert.equal(storage.raw.has('dsh-plan-spend.size'), false)
 })
 
 test('a stored size is applied on open', () => {
-  const storage = createStorage({ 'usage-meter.size': JSON.stringify({ width: 420, height: 300 }) })
+  const storage = createStorage({ 'dsh-plan-spend.size': JSON.stringify({ width: 420, height: 300 }) })
   const harness = mountPlugin(storage)
   harness.installDom()
   harness.settle()
@@ -469,6 +469,19 @@ test('a stored size is applied on open', () => {
 
   const style = panelOf(harness).props.style
   assert.deepEqual({ width: style.width, height: style.height }, { width: '420px', height: '300px' })
+})
+
+test('a size stored before the rename is adopted under the new key and dropped', () => {
+  const storage = createStorage({ 'usage-meter.size': JSON.stringify({ width: 410, height: 290 }) })
+  const harness = mountPlugin(storage)
+  harness.installDom()
+  harness.settle()
+  harness.openPanel()
+
+  const style = panelOf(harness).props.style
+  assert.deepEqual({ width: style.width, height: style.height }, { width: '410px', height: '290px' })
+  assert.equal(storage.raw.get('dsh-plan-spend.size'), JSON.stringify({ width: 410, height: 290 }))
+  assert.equal(storage.raw.has('usage-meter.size'), false)
 })
 
 test('the retired manual-position key is dropped once', () => {

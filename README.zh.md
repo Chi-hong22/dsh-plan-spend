@@ -59,7 +59,7 @@ dsh plugin --profile <profile> add github:Chi-hong22/dsh-plan-spend
 验证挂载：
 
 ```sh
-dsh --profile <profile> --dump-config | grep usage-meter
+dsh --profile <profile> --dump-config | grep dsh-plan-spend
 ```
 
 ## 配置
@@ -93,9 +93,9 @@ API key 读失败或未配置时，卡上还会显示生效凭据的**来源层*
 
 插件注册两条座位：
 
-- **`sidebar.footer.action`**（id `usage-meter`）：触发按钮。该座位是侧边栏自己的操作行，会向下发
+- **`sidebar.footer.action`**（id `dsh-plan-spend`）：触发按钮。该座位是侧边栏自己的操作行，会向下发
   `{ wide }`，所以按钮随侧边栏收起/展开自动联动（`wide === false` 时只留圆点图标）。
-- **`shell.overlay`**（id `usage-meter`）：面板。全局浮层位于每一列之外，面板因此能落在侧边栏
+- **`shell.overlay`**（id `dsh-plan-spend`）：面板。全局浮层位于每一列之外，面板因此能落在侧边栏
   **外侧**，而不会被侧边栏的 `overflow: hidden` 裁掉。
 
 **面板定位**：面板测量按钮所在的**框架级列**（结构性上溯到 frame 的直接子元素，不依赖哈希类名），
@@ -117,9 +117,9 @@ API key 读失败或未配置时，卡上还会显示生效凭据的**来源层*
 **关闭方式**：再次点击按钮、点面板里的 `×`、按 `Esc`、或点击面板外任意位置，都会关闭。
 
 **缩放**：手柄在面板**右上角**（离按钮最远的那个角），向右拖增宽、向上拖增高；尺寸存
-`localStorage: usage-meter.size`，并受面板最小尺寸与浮层边界双重约束。
+`localStorage: dsh-plan-spend.size`，并受面板最小尺寸与浮层边界双重约束。
 
-想恢复默认尺寸，清掉 `usage-meter.size`。改完源码运行 `npm run build` 重新生成 `client.js`；
+想恢复默认尺寸，清掉 `dsh-plan-spend.size`。改完源码运行 `npm run build` 重新生成 `client.js`；
 `client.js` 是构建产物，不要直接编辑。
 
 > 浏览器侧要拿到新 `client.js` 需要**刷新页面**：DSH 的 bundle 替换不属于普通启停同步。
@@ -138,7 +138,7 @@ Host 半包同样用 `ctx.get` 取账号服务，而不写进 `inject`：
 ## 安全边界
 
 - API 密钥只在 Host 半包内使用，**不下发到浏览器**；浏览器只读同源 JSON。
-- `GET /usage-meter/snapshot` 走 harness web server 的命名路由，**没有额外鉴权**。当 web server
+- `GET /dsh-plan-spend/snapshot` 走 harness web server 的命名路由，**没有额外鉴权**。当 web server
   绑定 `0.0.0.0` 时，同一局域网内可读到余额与用量数字（不含密钥）。仅在本机使用时无影响。
 
 ## 结构

@@ -74,7 +74,7 @@ dsh plugin --profile <profile> add github:Chi-hong22/dsh-plan-spend
 Verify the mount:
 
 ```sh
-dsh --profile <profile> --dump-config | grep usage-meter
+dsh --profile <profile> --dump-config | grep dsh-plan-spend
 ```
 
 ## Configuration
@@ -119,10 +119,10 @@ Adding a provider = one row in `ADAPTERS` plus one reader function.
 
 The plugin registers two seats:
 
-- **`sidebar.footer.action`** (id `usage-meter`): the trigger. That seat is the
-  sidebar's own action row and hands each entry `{ wide }`, so the button
+- **`sidebar.footer.action`** (id `dsh-plan-spend`): the trigger. That seat is
+  the sidebar's own action row and hands each entry `{ wide }`, so the button
   follows the collapse/expand rail by itself (icon-only when `wide === false`).
-- **`shell.overlay`** (id `usage-meter`): the panel. The frame-wide layer sits
+- **`shell.overlay`** (id `dsh-plan-spend`): the panel. The frame-wide layer sits
   outside every column, so the panel renders *beside* the sidebar instead of
   being clipped by the sidebar's `overflow: hidden`.
 
@@ -154,10 +154,10 @@ outside the panel all close it.
 
 **Resizing**: the grip sits in the panel's **top-right** corner — the one
 farthest from the button — dragging right grows the width and dragging up grows
-the height. The size is stored under `usage-meter.size` and is bounded by the
+the height. The size is stored under `dsh-plan-spend.size` and is bounded by the
 panel minimum and the overlay bounds.
 
-To return to the default size, clear `usage-meter.size`. After editing the
+To return to the default size, clear `dsh-plan-spend.size`. After editing the
 source run `npm run build` to regenerate `client.js`; that file is a build
 artifact — do not edit it directly.
 
@@ -182,7 +182,7 @@ still mount the meter, with the API-key card in charge.
 
 - API keys are used in the host half only and **never reach the browser**; the
   browser reads same-origin JSON.
-- `GET /usage-meter/snapshot` is a named route on the harness web server with
+- `GET /dsh-plan-spend/snapshot` is a named route on the harness web server with
   **no additional authentication**. When the web server binds `0.0.0.0`, anyone
   on the same network can read the balance and quota numbers (never the keys).
   Loopback-only use is unaffected.
