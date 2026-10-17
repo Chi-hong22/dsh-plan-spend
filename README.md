@@ -128,8 +128,9 @@ The plugin registers two seats:
 
 **Placement**: the panel measures the frame-level column that holds the button
 (by climbing the DOM to the frame's direct child, never by hashed class name),
-anchors its left edge 10px past that column's right edge and its bottom at the
-button's bottom, then grows upward. A sidebar width change re-measures.
+anchors its left edge 10px past that column's right edge and its top 10px below
+the column's own top — the top of the workspace — then grows downward. A sidebar
+width change re-measures.
 
 > One deviation worth knowing: `sidebar.settings` (the account row) is a
 > **single** seat already owned by the shipped account/settings UI, so taking it
@@ -137,24 +138,19 @@ button's bottom, then grows upward. A sidebar width change re-measures.
 > column with `footerActions` above `settingsArea`, so the button lands in the
 > row **above** the account row rather than at its right in the same row.
 
-**Button styling** mirrors the shipped account launcher — `padding: 6px`,
-`border-radius: 12px`, `gap: 8px`, `font-size: 14px/22px`, row margin `4px -2px`,
-hover `--dsw-alias-interactive-bg-hover`; the glyph is **32×32**, the avatar's own
-box; in the rail it becomes a centred `40×40` icon.
-
-**Alignment with the account row is measured, not assumed**: on mount the row
-takes the sibling account row, finds its first `button`, then that button's first
-sized child (the avatar) and the next sized sibling (its label), and converts
-both left edges into this row's `padding-left` and the label's `margin-left`.
-Whatever inset that row actually uses, this one follows; with no account row the
-stylesheet defaults stand. The rail opts out and keeps its own centred box.
+**Button styling** mirrors the sidebar's own navigation rows — row margin
+`0 2px`, `padding: 7px 8px`, `min-height: 36px`, `border-radius:`
+`var(--dsw-radius-md)`, `gap: 8px`, `font-size: 14px/22px`, hover
+`--dsw-alias-interactive-bg-hover`; the glyph is the shipped **16px** gauge icon,
+so the row reads as one more navigation row rather than a second account row. In
+the rail it becomes a centred `36×36` box with the same glyph at **18px**.
 
 **Dismissal**: the trigger again, the panel's `×`, `Esc`, or a press anywhere
 outside the panel all close it.
 
-**Resizing**: the grip sits in the panel's **top-right** corner — the one
-farthest from the button — dragging right grows the width and dragging up grows
-the height. The size is stored under `dsh-plan-spend.size` and is bounded by the
+**Resizing**: the grip sits in the panel's **bottom-right** corner — the one
+farthest from the top anchor — dragging right grows the width and dragging down
+grows the height. The size is stored under `dsh-plan-spend.size` and is bounded by the
 panel minimum and the overlay bounds.
 
 **Keyboard**: opening moves focus into the panel, and `Esc` closes it and hands

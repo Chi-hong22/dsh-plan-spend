@@ -53,8 +53,8 @@ const UM_PANEL_GAP_PX = 10
 const UM_RESIZE_THRESHOLD_PX = 3
 const UM_TRIGGER_ORDER = 20
 const UM_PANEL_ORDER = 30
-/** The shipped account avatar's box; this row's glyph matches it. */
-const UM_ICON_SIZE = 32
+/** The shipped sidebar glyph size; the row is one of the sidebar's own rows. */
+const UM_ICON_SIZE = 16
 const UM_LABEL_GAP_PX = 8
 /** The panel's DOM id, so the trigger can point `aria-controls` at it. */
 const UM_PANEL_ID = 'dsh-plan-spend-panel'
@@ -336,9 +336,10 @@ function makeMeterStore() {
 }
 
 /**
- * Places the panel just outside the frame-level column that holds the button.
- * The column is found by climbing the DOM to the frame's direct child, so the
- * decision never depends on hashed class names or on the sidebar's width.
+ * Places the panel at the top of the workspace, just outside the frame-level
+ * column that holds the button. The column is found by climbing the DOM to the
+ * frame's direct child, so the decision never depends on hashed class names or
+ * on the sidebar's width.
  */
 function measurePlacement(buttonEl, layerEl) {
   if (!buttonEl || !layerEl) return null
@@ -351,72 +352,19 @@ function measurePlacement(buttonEl, layerEl) {
   while (column.parentElement && column.parentElement !== boundary) column = column.parentElement
   const columnRect = column.getBoundingClientRect()
   const left = Math.round(Math.max(0, columnRect.right - layerRect.left + UM_PANEL_GAP_PX))
-  const bottom = Math.round(Math.max(0, layerRect.bottom - buttonRect.bottom))
+  const top = Math.round(Math.max(0, columnRect.top - layerRect.top + UM_PANEL_GAP_PX))
   return {
     left,
-    bottom,
+    top,
     maxWidth: Math.max(UM_MIN_SIZE.width, Math.round(layerRect.width - left - UM_EDGE_MARGIN_PX)),
-    maxHeight: Math.max(UM_MIN_SIZE.height, Math.round(layerRect.height - bottom - UM_EDGE_MARGIN_PX)),
+    maxHeight: Math.max(UM_MIN_SIZE.height, Math.round(layerRect.height - top - UM_EDGE_MARGIN_PX)),
   }
 }
 
 function samePlacement(a, b) {
   if (a === b) return true
   if (!a || !b) return false
-  return a.left === b.left && a.bottom === b.bottom && a.maxWidth === b.maxWidth && a.maxHeight === b.maxHeight
-}
-
-function firstSizedChild(element) {
-  for (const child of Array.from(element.children || [])) {
-    if (child.getBoundingClientRect().width > 0) return child
-  }
-  return null
-}
-
-function nextSizedSibling(element) {
-  let node = element.nextElementSibling
-  while (node) {
-    if (node.getBoundingClientRect().width > 0) return node
-    node = node.nextElementSibling
-  }
-  return null
-}
-
-/**
- * Aligns this row with the account row below it.
- *
- * The shipped account launcher owns its own leading inset and label offset, and
- * the action row is a shared seat this plugin does not own — so the insets are
- * measured off the sibling row instead of hard-coded, and whatever that row
- * decides (32px avatar, a wider inset, another occupant to its left) this row
- * follows. Returns null whenever the sibling row is not there yet, which leaves
- * the CSS defaults in place.
- */
-function measureRowInsets(buttonEl) {
-  const actions = buttonEl ? buttonEl.parentElement : null
-  const footArea = actions ? actions.parentElement : null
-  if (!actions || !footArea) return null
-  const settingsArea = Array.from(footArea.children).find((row) => row !== actions)
-  if (!settingsArea || typeof settingsArea.querySelector !== 'function') return null
-  // The account launcher is the first button in that row, ahead of any indicator.
-  const accountButton = settingsArea.querySelector('button')
-  if (!accountButton) return null
-  const lead = firstSizedChild(accountButton)
-  if (!lead) return null
-  const label = nextSizedSibling(lead)
-  const iconLeft = lead.getBoundingClientRect().left
-  const buttonLeft = buttonEl.getBoundingClientRect().left
-  const insets = { paddingLeft: Math.round(iconLeft - buttonLeft) }
-  if (label) {
-    insets.labelMargin = Math.round(label.getBoundingClientRect().left - iconLeft - UM_ICON_SIZE)
-  }
-  return insets
-}
-
-function sameInsets(a, b) {
-  if (a === b) return true
-  if (!a || !b) return false
-  return a.paddingLeft === b.paddingLeft && a.labelMargin === b.labelMargin
+  return a.left === b.left && a.top === b.top && a.maxWidth === b.maxWidth && a.maxHeight === b.maxHeight
 }
 
 function BalanceBody(props) {
@@ -559,7 +507,6 @@ function ProviderCard(props) {
 function UsageTrigger(props) {
   const { t, store, wide } = props
   const [open, setOpen] = React.useState(() => store.isOpen())
-  const [insets, setInsets] = React.useState(null)
   const buttonRef = React.useRef(null)
 
   React.useEffect(() => store.subscribe(() => setOpen(store.isOpen())), [store])
@@ -569,36 +516,15 @@ function UsageTrigger(props) {
     return () => store.setButton(null)
   }, [store, wide])
 
-  // Line this row up with the account row below it. The account launcher mounts
-  // in the same commit, but a late registration would land after this effect, so
-  // one frame later is measured again before giving up.
-  React.useEffect(() => {
-    const measure = () => {
-      const next = measureRowInsets(buttonRef.current)
-      if (next) setInsets((current) => (sameInsets(current, next) ? current : next))
-    }
-    measure()
-    if (typeof requestAnimationFrame !== 'function') return undefined
-    const frame = requestAnimationFrame(measure)
-    return () => { if (typeof cancelAnimationFrame === 'function') cancelAnimationFrame(frame) }
-  }, [wide])
-
   const compact = wide === false
-  // The row mirrors the shipped account launcher (padding 6, radius 12, gap 8,
-  // 14/22 type) and the glyph is 32x32 — the avatar's own box — so the button
-  // reads as a sibling of the account row below it.
-  const buttonStyle = insets && !compact
-    ? { paddingLeft: insets.paddingLeft + 'px', gap: '0px' }
-    : undefined
-  const labelStyle = insets && !compact && insets.labelMargin !== undefined
-    ? { marginLeft: insets.labelMargin + 'px' }
-    : undefined
+  // The row mirrors the sidebar's own panel rows (padding 7/8, side margin 2, a
+  // 36px row, gap 8, 14/22 type) and their 16px glyph, so it reads as one more
+  // navigation row rather than a second account row.
 
   return React.createElement('button', {
     ref: buttonRef,
     type: 'button',
     className: 'um-button' + (compact ? ' um-button-compact' : '') + (open ? ' um-button-open' : ''),
-    style: buttonStyle,
     title: t('button.title'),
     'aria-label': t('button.title'),
     'aria-expanded': open,
@@ -609,21 +535,20 @@ function UsageTrigger(props) {
   },
     React.createElement('svg', {
       className: 'um-button-icon',
-      viewBox: '0 0 20 20',
+      viewBox: '0 0 16 16',
       width: UM_ICON_SIZE,
       height: UM_ICON_SIZE,
       'aria-hidden': 'true',
       fill: 'none',
       stroke: 'currentColor',
-      strokeWidth: 1.15,
-      strokeLinecap: 'round',
+      strokeWidth: 1,
     },
-      // Gauge dial: a symmetric 240° arc around (10, 11.85) plus a 55° needle. The proportions
-      // follow Lucide's 24px gauge; 1.15 stroke lands on 1.84px at the 32px button so the ring
-      // stays crisp instead of graying out.
-      React.createElement('path', { d: 'M3.59 15.55A7.4 7.4 0 1 1 16.41 15.55' }),
-      React.createElement('path', { d: 'M10 11.85 12.87 7.75' })),
-    compact ? null : React.createElement('span', { className: 'um-button-label', style: labelStyle }, t('button.label')))
+      // The icon set's own gauge glyph: a 16px grid, 1px stroke, a 270° dial with a 45°
+      // needle and a filled 1.25r hub, so the row matches the shipped navigation rows.
+      React.createElement('path', { d: 'M3.4041 13.096C2.49514 12.187 1.87614 11.0288 1.62537 9.76798C1.37459 8.50716 1.50331 7.20028 1.99525 6.01261C2.48719 4.82494 3.32025 3.80981 4.3891 3.09557C5.45795 2.38134 6.71458 2.00008 8.0001 2C9.28563 2.00008 10.5423 2.38134 11.6111 3.09557C12.68 3.80981 13.513 4.82494 14.005 6.01261C14.4969 7.20028 14.6256 8.50716 14.3748 9.76798C14.1241 11.0288 13.5051 12.187 12.5961 13.096' }),
+      React.createElement('path', { d: 'M8 8.49994L11.6114 4.88855' }),
+      React.createElement('path', { d: 'M8 9.75C8.69036 9.75 9.25 9.19036 9.25 8.5C9.25 7.80964 8.69036 7.25 8 7.25C7.30964 7.25 6.75 7.80964 6.75 8.5C6.75 9.19036 7.30964 9.75 8 9.75Z', fill: 'currentColor', stroke: 'none' })),
+    compact ? null : React.createElement('span', { className: 'um-button-label' }, t('button.label')))
 }
 
 /** The `shell.overlay` entry: the panel, rendered outside the sidebar's column. */
@@ -771,9 +696,9 @@ function UsagePanel(props) {
   }, [open, store])
 
   /**
-   * The grip sits in the panel's top-right corner — the one farthest from the
-   * button — so dragging right grows the width and dragging up grows the height
-   * while the left/bottom anchoring keeps the panel clear of the sidebar.
+   * The grip sits in the panel's bottom-right corner — the one farthest from the
+   * top anchor — so dragging right grows the width and dragging down grows the
+   * height while the left/top anchoring keeps the panel clear of the sidebar.
    */
   const onHandlePointerDown = (event) => {
     if (event.button !== 0) return
@@ -804,7 +729,7 @@ function UsagePanel(props) {
     setResizing(true)
     const bounds = placementBounds(placement) || UM_DEFAULT_SIZE
     drag.width = clamp(Math.round(drag.startWidth + dx), UM_MIN_SIZE.width, bounds.width)
-    drag.height = clamp(Math.round(drag.startHeight - dy), UM_MIN_SIZE.height, bounds.height)
+    drag.height = clamp(Math.round(drag.startHeight + dy), UM_MIN_SIZE.height, bounds.height)
     setSize({ width: drag.width, height: drag.height })
   }
 
@@ -826,7 +751,7 @@ function UsagePanel(props) {
 
   /**
    * The grip is the only resize affordance, so it also answers the arrow keys:
-   * Left/Right change the width, Up/Down the height, Shift takes a bigger step.
+   * Left/Right change the width, Down/Up the height, Shift takes a bigger step.
    */
   const onHandleKeyDown = (event) => {
     const step = event.shiftKey ? UM_KEYBOARD_RESIZE_STEP * 4 : UM_KEYBOARD_RESIZE_STEP
@@ -834,8 +759,8 @@ function UsagePanel(props) {
     const wanted = { width, height }
     if (event.key === 'ArrowLeft') wanted.width = width - step
     else if (event.key === 'ArrowRight') wanted.width = width + step
-    else if (event.key === 'ArrowUp') wanted.height = height + step
-    else if (event.key === 'ArrowDown') wanted.height = height - step
+    else if (event.key === 'ArrowDown') wanted.height = height + step
+    else if (event.key === 'ArrowUp') wanted.height = height - step
     else return
     event.preventDefault()
     const next = {
@@ -849,10 +774,10 @@ function UsagePanel(props) {
   const anchorStyle = placement
     ? {
       left: placement.left + 'px',
-      bottom: placement.bottom + 'px',
+      top: placement.top + 'px',
       maxWidth: placement.maxWidth + 'px',
     }
-    : { left: '64px', bottom: '16px' }
+    : { left: '64px', top: '16px' }
   // A stored size can predate this window's placement; clamp the box to the
   // space the layer measured so the panel never hangs past its anchor.
   const panel_bounds = placementBounds(placement) || { width, height }
@@ -1011,20 +936,21 @@ const EN_DICT = {
 }
 
 const UM_CSS = `
-.um-button { box-sizing: border-box; cursor: pointer; flex: 1; min-width: 0; margin: 4px -2px; padding: 6px; display: flex; align-items: center; gap: ${UM_LABEL_GAP_PX}px; overflow: hidden; border: none; border-radius: 12px; background: transparent; color: var(--dsw-alias-label-primary); font-family: inherit; font-size: 14px; line-height: 22px; user-select: none; -webkit-user-select: none; }
+.um-button { box-sizing: border-box; cursor: pointer; flex: 1; min-width: 0; margin: 0 2px; padding: 7px 8px; min-height: 36px; display: flex; align-items: center; gap: ${UM_LABEL_GAP_PX}px; overflow: hidden; border: none; border-radius: var(--dsw-radius-md, 8px); background: transparent; color: var(--dsw-alias-label-primary); font-family: inherit; font-size: 14px; line-height: 22px; user-select: none; -webkit-user-select: none; }
 .um-button:hover, .um-button-open { background: var(--dsw-alias-interactive-bg-hover) }
-.um-button-compact { flex: none; width: 40px; height: 40px; margin: 0; padding: 4px; justify-content: center; gap: 0; }
-.um-button-icon { flex: none; display: block; width: 32px; height: 32px; }
+.um-button-compact { flex: none; width: 36px; height: 36px; margin: 0; padding: 0; justify-content: center; gap: 0; }
+.um-button-icon { flex: none; display: block; width: 16px; height: 16px; }
+.um-button-compact .um-button-icon { width: 18px; height: 18px; }
 .um-button-label { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .um-anchor { position: absolute; pointer-events: none; z-index: 1; }
 .um-panel { pointer-events: auto; position: relative; display: flex; flex-direction: column; min-width: 260px; min-height: 160px; overflow: hidden; border: .5px solid var(--dsw-alias-border-l2); background: var(--dsw-alias-bg-layer-1); border-radius: 12px; box-shadow: 0 8px 28px rgba(15, 23, 42, .22); color: var(--dsw-alias-label-primary); font: 13px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif; }
 .um-panel-resizing { user-select: none; -webkit-user-select: none; }
-.um-panel-head { display: flex; align-items: center; gap: 8px; padding: 9px 26px 9px 14px; border-bottom: .5px solid var(--dsw-alias-border-l1); flex: none; }
+.um-panel-head { display: flex; align-items: center; gap: 8px; padding: 9px 14px; border-bottom: .5px solid var(--dsw-alias-border-l1); flex: none; }
 .um-panel-title { font-weight: 600; font-size: 13px; }
 .um-panel-stamp { margin-left: auto; font-size: 11px; color: var(--dsw-alias-label-tertiary, var(--dsw-alias-label-secondary)); font-variant-numeric: tabular-nums; }
 .um-icon-btn { border: none; background: none; color: var(--dsw-alias-label-secondary); cursor: pointer; font-size: 14px; line-height: 18px; padding: 0 4px; border-radius: 5px; }
 .um-icon-btn:hover { color: var(--dsw-alias-label-primary); background: var(--dsw-alias-interactive-bg-hover, rgba(127, 127, 127, .12)); }
-.um-panel-body { flex: 1; min-height: 0; padding: 10px 12px 12px; overflow: auto; display: flex; flex-direction: column; gap: 10px; }
+.um-panel-body { flex: 1; min-height: 0; padding: 10px 12px 18px; overflow: auto; display: flex; flex-direction: column; gap: 10px; }
 .um-card { border: .5px solid var(--dsw-alias-border-l1); border-radius: 9px; padding: 9px 11px 11px; background: var(--dsw-alias-bg-base); }
 .um-card-off { opacity: .6; }
 .um-card-title { margin: 0 0 8px; font-size: 12px; font-weight: 600; color: var(--dsw-alias-label-secondary); }
@@ -1050,7 +976,7 @@ const UM_CSS = `
 .um-peak { margin-top: 8px; padding-top: 8px; border-top: .5px solid var(--dsw-alias-border-l1); }
 .um-peak-state { font-size: 11px; color: var(--dsw-alias-label-secondary); font-variant-numeric: tabular-nums; }
 .um-peak-on { color: var(--dsw-alias-state-warning-primary, #f59e0b); }
-.um-resize { position: absolute; right: 0; top: 0; width: 18px; height: 18px; z-index: 2; opacity: .45; cursor: nesw-resize; touch-action: none; transition: opacity 120ms ease; border-right: 2px solid var(--dsw-alias-label-tertiary, #94a3b8); border-top: 2px solid var(--dsw-alias-label-tertiary, #94a3b8); border-top-right-radius: 11px; }
+.um-resize { position: absolute; right: 0; bottom: 0; width: 18px; height: 18px; z-index: 2; opacity: .45; cursor: nwse-resize; touch-action: none; transition: opacity 120ms ease; border-right: 2px solid var(--dsw-alias-label-tertiary, #94a3b8); border-bottom: 2px solid var(--dsw-alias-label-tertiary, #94a3b8); border-bottom-right-radius: 11px; }
 .um-resize:hover, .um-resize-active { opacity: 1; }
 `
 

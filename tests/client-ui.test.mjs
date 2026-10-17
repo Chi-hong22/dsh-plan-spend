@@ -136,16 +136,8 @@ function createDocumentStub() {
 /**
  * The sidebar chain the placement walk climbs: button → actions → foot area →
  * sidebar column → frame, plus the overlay layer whose parent is the frame.
- * `settingsArea` is the account row this plugin aligns against; `settingsRow:
- * false` models a composition that never registers one.
  */
-function createSidebarDom({
-  columnRight = 280,
-  buttonBottom = 744,
-  accountInset = 4,
-  accountLabelInset = 44,
-  settingsRow = true,
-} = {}) {
+function createSidebarDom({ columnRight = 280, buttonBottom = 744 } = {}) {
   const frame = fakeBox(FRAME)
   const column = fakeBox({ left: 0, top: 0, right: columnRight, bottom: buttonBottom })
   column.parentElement = frame
@@ -153,29 +145,15 @@ function createSidebarDom({
   footArea.parentElement = column
   const actions = fakeBox({ left: 0, top: 0, right: columnRight, bottom: buttonBottom })
   actions.parentElement = footArea
-  // The shipped row carries `margin: 4px -2px`, so its border box starts at -2.
-  const button = fakeBox({ left: -2, top: buttonBottom - 44, right: 118, bottom: buttonBottom })
+  const button = fakeBox({ left: 0, top: buttonBottom - 44, right: 118, bottom: buttonBottom })
   button.parentElement = actions
-
-  const label = fakeBox({ left: accountLabelInset, top: 0, right: accountLabelInset + 60, bottom: 20 })
-  const avatar = fakeBox({ left: accountInset, top: 0, right: accountInset + 32, bottom: 32 })
-  avatar.nextElementSibling = label
-  const accountButton = {
-    children: [avatar],
-    getBoundingClientRect: () => ({ left: -2, top: 0, right: columnRight, bottom: 44, width: columnRight + 2, height: 44 }),
-  }
-  const settingsArea = {
-    parentElement: footArea,
-    getBoundingClientRect: () => ({ left: 0, top: 0, right: columnRight, bottom: buttonBottom, width: columnRight, height: buttonBottom }),
-    querySelector: (selector) => (selector === 'button' ? accountButton : null),
-  }
-  footArea.children = settingsRow ? [actions, settingsArea] : [actions]
+  footArea.children = [actions]
 
   const layer = fakeBox(FRAME)
   layer.parentElement = frame
   const panelNode = { isPanel: true }
   return {
-    frame, column, footArea, actions, settingsArea, accountButton, avatar, label,
+    frame, column, footArea, actions,
     button, layer, panelNode, columnRight, buttonBottom,
   }
 }
@@ -405,9 +383,9 @@ test('opening places the panel just outside the sidebar column', () => {
   harness.openPanel()
 
   const style = anchorOf(harness).props.style
-  // left = column right (280) + gap (10); bottom = layer bottom (800) - button bottom (744).
+  // left = column right (280) + gap (10); top = column top - layer top + gap (10).
   assert.equal(style.left, '290px')
-  assert.equal(style.bottom, '56px')
+  assert.equal(style.top, '10px')
   // maxWidth = 1200 - 290 - 8.
   assert.equal(style.maxWidth, '902px')
   assert.equal(panelOf(harness).props.children[0].props.children.length, 4, 'header keeps title, stamp and two buttons')
@@ -444,7 +422,7 @@ test('closing from the header hides the panel', () => {
   assert.equal(harness.trigger.tree.props['aria-expanded'], false)
 })
 
-test('dragging the top-right grip grows the panel away from the sidebar and stores it', () => {
+test('dragging the bottom-right grip grows the panel and stores it', () => {
   const storage = createStorage()
   const harness = mountPlugin(storage)
   harness.installDom()
@@ -452,8 +430,8 @@ test('dragging the top-right grip grows the panel away from the sidebar and stor
   harness.openPanel()
   installPanelBox(harness, { width: 330, height: 360 })
 
-  // The grip is top-right, so outward is right and up.
-  dragGrip(harness, { x: 100, y: 100 }, { x: 150, y: 60 })
+  // The grip is bottom-right, so outward is right and down.
+  dragGrip(harness, { x: 100, y: 100 }, { x: 150, y: 140 })
 
   assert.equal(storage.raw.get('dsh-plan-spend.size'), JSON.stringify({ width: 380, height: 400 }))
   const style = panelOf(harness).props.style
@@ -469,11 +447,11 @@ test('the grip respects the minimum size and the placement bounds', () => {
 
   installPanelBox(harness, { width: 330, height: 360 })
   dragGrip(harness, { x: 0, y: 0 }, { x: -500, y: 500 })
-  assert.equal(storage.raw.get('dsh-plan-spend.size'), JSON.stringify({ width: 260, height: 160 }))
+  assert.equal(storage.raw.get('dsh-plan-spend.size'), JSON.stringify({ width: 260, height: 782 }))
 
   installPanelBox(harness, { width: 330, height: 360 })
   dragGrip(harness, { x: 0, y: 0 }, { x: 5000, y: -5000 })
-  assert.equal(storage.raw.get('dsh-plan-spend.size'), JSON.stringify({ width: 902, height: 736 }))
+  assert.equal(storage.raw.get('dsh-plan-spend.size'), JSON.stringify({ width: 902, height: 160 }))
 })
 
 test('a grip drag below the threshold stores nothing', () => {
@@ -557,9 +535,10 @@ test('the trigger renders an icon plus a label, and drops the label in the rail'
   const children = harness.trigger.tree.props.children
   assert.equal(children[0].type, 'svg', 'the icon leads the row')
   assert.equal(children[0].props.className, 'um-button-icon')
-  // The glyph occupies the shipped account avatar's box (32x32).
-  assert.equal(children[0].props.width, 32)
-  assert.equal(children[0].props.height, 32)
+  // The glyph is the sidebar's own 16px navigation glyph.
+  assert.equal(children[0].props.viewBox, '0 0 16 16')
+  assert.equal(children[0].props.width, 16)
+  assert.equal(children[0].props.height, 16)
   assert.equal(children[1].type, 'span', 'the wide row carries a label')
 
   harness.trigger.setProps({ wide: false })
@@ -614,47 +593,16 @@ test('the dismiss listeners exist only while the panel is open', () => {
   assert.equal(harness.doc.count(), 0, 'closing removes both')
 })
 
-test('the row measures the account row and aligns its icon and label to it', () => {
-  // Account avatar at 4, its label at 44; this button's border box starts at -2.
-  const dom = createSidebarDom({ accountInset: 4, accountLabelInset: 44 })
-  const harness = mountPlugin(createStorage(), dom)
-  harness.installDom()
-  harness.settle()
-
-  // paddingLeft = 4 - (-2); labelMargin = (44 - 4) - 32.
-  assert.deepEqual(harness.trigger.tree.props.style, { paddingLeft: '6px', gap: '0px' })
-  assert.deepEqual(harness.trigger.tree.props.children[1].props.style, { marginLeft: '8px' })
-})
-
-test('a different account inset is followed instead of assumed', () => {
-  const dom = createSidebarDom({ accountInset: 14, accountLabelInset: 62 })
-  const harness = mountPlugin(createStorage(), dom)
-  harness.installDom()
-  harness.settle()
-
-  assert.equal(harness.trigger.tree.props.style.paddingLeft, '16px')
-  assert.equal(harness.trigger.tree.props.children[1].props.style.marginLeft, '16px')
-})
-
-test('without an account row the stylesheet defaults stand in', () => {
-  const harness = mountPlugin(createStorage(), createSidebarDom({ settingsRow: false }))
-  harness.installDom()
-  harness.settle()
-
-  assert.equal(harness.trigger.tree.props.style, undefined)
-  assert.equal(harness.trigger.tree.props.children[1].props.style, undefined)
-})
-
-test('the rail ignores the measured insets and centres the glyph', () => {
+test('the row is styled by the sheet, not measured, and the rail keeps the icon only', () => {
   const harness = mountPlugin(createStorage())
   harness.installDom()
   harness.settle()
-  assert.ok(harness.trigger.tree.props.style, 'the wide row is aligned')
+  assert.equal(harness.trigger.tree.props.style, undefined, 'the row follows .panelRow in CSS')
+  assert.equal(harness.trigger.tree.props.children[1].props.style, undefined)
 
   harness.trigger.setProps({ wide: false })
   harness.settle()
 
-  assert.equal(harness.trigger.tree.props.style, undefined, 'the rail keeps its own centred box')
   assert.equal(harness.trigger.tree.props.children[1], null)
 })
 
@@ -1229,8 +1177,8 @@ test('the grip resizes with the arrow keys and stores the result', () => {
 
   handleOf(harness).props.onKeyDown({ key: 'ArrowDown', shiftKey: false, preventDefault: () => {} })
   harness.settle()
-  assert.equal(panelOf(harness).props.style.height, '344px')
-  assert.equal(storage.raw.get('dsh-plan-spend.size'), JSON.stringify({ width: 346, height: 344 }))
+  assert.equal(panelOf(harness).props.style.height, '376px')
+  assert.equal(storage.raw.get('dsh-plan-spend.size'), JSON.stringify({ width: 346, height: 376 }))
 
   handleOf(harness).props.onKeyDown({ key: 'ArrowRight', shiftKey: true, preventDefault: () => {} })
   harness.settle()
@@ -1250,7 +1198,7 @@ test('a stored size larger than the measured placement is clamped on screen', ()
   harness.openPanel()
 
   const style = panelOf(harness).props.style
-  assert.deepEqual({ width: style.width, height: style.height }, { width: '902px', height: '736px' })
+  assert.deepEqual({ width: style.width, height: style.height }, { width: '902px', height: '782px' })
 })
 
 test('a slower earlier response cannot overwrite the newer snapshot', async () => {
