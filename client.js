@@ -1052,6 +1052,9 @@ return {
     const locale = ctx.get('locale')
     // Unique per-apply namespace: the locale registry is process-wide and a
     // stale registration of the stable name would throw ("already has locale").
+    // register() returns nothing (checked against dsh-client-locale's client
+    // half), so the effect has no disposer to hand back; the unique name is the
+    // only thing that keeps a reload usable.
     const ns = 'dsh-plan-spend.' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6)
     if (locale) {
       ctx.effect(() => locale.register(ns, 'zh', ZH_DICT), 'dsh-plan-spend: zh dict')
