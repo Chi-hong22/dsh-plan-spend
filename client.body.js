@@ -543,9 +543,9 @@ function ProviderCard(props) {
  *
  * The row's click handler belongs to the shell, which selects a main panel by
  * id; an id with no `main` entry throws and leaves the shell on its current
- * panel. So the entry claims the row it renders into: a native listener on that
- * button runs before React's delegated one, stops the click there, and toggles
- * the panel instead.
+ * panel. So the entry claims the row it renders into: a capture-phase listener
+ * on the document runs before the handler the shell delegates at its React
+ * root, stops the click there, and toggles the panel instead.
  */
 function UsageGlyph(props) {
   const store = props.store
@@ -561,11 +561,13 @@ function UsageGlyph(props) {
     // so an open panel keeps its anchor when the sidebar collapses.
     store.touch()
     const onClick = (event) => {
+      if (!row.contains || !row.contains(event.target)) return
       event.preventDefault()
       event.stopPropagation()
       store.toggle()
     }
-    row.addEventListener('click', onClick)
+    const doc = svg.ownerDocument || (typeof document === 'undefined' ? null : document)
+    if (doc) doc.addEventListener('click', onClick, true)
     // The row is the trigger, so the row carries the disclosure state. The panel
     // only exists while open, hence `aria-controls` only while open: a dangling
     // IDREF is an error.
@@ -579,7 +581,7 @@ function UsageGlyph(props) {
     sync()
     const unsubscribe = store.subscribe(sync)
     return () => {
-      row.removeEventListener('click', onClick)
+      if (doc) doc.removeEventListener('click', onClick, true)
       unsubscribe()
       store.setButton(null)
     }
@@ -715,7 +717,7 @@ function UsagePanel(props) {
     if (!open) return undefined
     const layerEl = rootRef.current ? rootRef.current.offsetParent : null
     if (!layerEl) return undefined
-    let watchedBody = null
+    let watched_body = null
     let observer = null
     const measure = () => {
       const button = store.button()
@@ -729,9 +731,9 @@ function UsagePanel(props) {
       const column = columnOf(button, layerEl)
       const body = column === null ? null : conversationBody(column.getBoundingClientRect())
       const element = body === null ? null : body.element
-      if (element === watchedBody) return
-      if (watchedBody) observer.unobserve(watchedBody)
-      watchedBody = element
+      if (element === watched_body) return
+      if (watched_body) observer.unobserve(watched_body)
+      watched_body = element
       if (element) observer.observe(element)
     }
     if (typeof ResizeObserver !== 'undefined') observer = new ResizeObserver(measure)

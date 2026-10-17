@@ -96,8 +96,8 @@ API key 读失败或未配置时，卡上还会显示生效凭据的**来源层*
 - **`sidebar.panellist`**（id `dsh-plan-spend`，order 20）：导航行。该座位是侧边栏自己的导航列表，
   行按钮、图标盒、标题、选中态、轨道态全由 shell 画；本入口只按 shell 下发的尺寸渲染仪表字形
   （侧边栏 **16px**、折叠轨道 **18px**，`{ size, active }`），不额外加任何像素。点击该行本来会让
-  shell 把 `dsh-plan-spend` 当成主面板去选中——而它并不存在，会抛错——所以字形在行元素上先截住这次
-  点击（早于 React 的委托处理器），改为开关面板。
+  shell 把 `dsh-plan-spend` 当成主面板去选中——而它并不存在，会抛错——所以字形在 document 的捕获
+  阶段截住这次点击（早于 shell 挂在 React 根上的委托处理器，与根挂在哪个容器无关），改为开关面板。
 - **`shell.overlay`**（id `dsh-plan-spend`）：面板。全局浮层位于每一列之外，面板因此能落在侧边栏
   **外侧**，而不会被侧边栏的 `overflow: hidden` 裁掉。
 

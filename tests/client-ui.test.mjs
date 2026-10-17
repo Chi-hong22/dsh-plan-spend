@@ -101,6 +101,17 @@ function createStorage(initial = {}) {
   }
 }
 
+/** A click event as the browser hands it to the first listener on its path. */
+function createClick(target) {
+  return {
+    target,
+    defaultPrevented: false,
+    propagationStopped: false,
+    preventDefault() { this.defaultPrevented = true },
+    stopPropagation() { this.propagationStopped = true },
+  }
+}
+
 function fakeBox({ left = 0, top = 0, right = 0, bottom = 0 } = {}) {
   const box = {
     parentElement: null,
@@ -119,16 +130,20 @@ function createDocumentStub() {
     querySelectorAll(selector) {
       return selector === '[data-conversation-content]' ? doc.conversationBodies : []
     },
-    addEventListener(type, listener) {
-      if (!listeners.has(type)) listeners.set(type, new Set())
-      listeners.get(type).add(listener)
+    addEventListener(type, listener, capture) {
+      if (!listeners.has(type)) listeners.set(type, new Map())
+      listeners.get(type).set(listener, capture === true)
     },
     removeEventListener(type, listener) {
       const set = listeners.get(type)
       if (set) set.delete(listener)
     },
     dispatch(type, event) {
-      for (const listener of Array.from(listeners.get(type) || [])) listener(event)
+      for (const listener of Array.from(listeners.get(type) || new Map()).map(([entry]) => entry)) listener(event)
+    },
+    /** The phase each listener of `type` was registered in. */
+    listenerPhases(type) {
+      return Array.from((listeners.get(type) || new Map()).values())
     },
     count() {
       let total = 0
@@ -195,13 +210,7 @@ function createSidebarDom({ columnRight = 280, buttonBottom = 744 } = {}) {
   button.removeAttribute = (name) => { button.attributes.delete(name) }
   button.addEventListener = (type, listener) => { if (type === 'click') button.listeners.add(listener) }
   button.removeEventListener = (type, listener) => { if (type === 'click') button.listeners.delete(listener) }
-  button.dispatchClick = () => {
-    const event = {
-      defaultPrevented: false,
-      propagationStopped: false,
-      preventDefault() { this.defaultPrevented = true },
-      stopPropagation() { this.propagationStopped = true },
-    }
+  button.dispatchClick = (event = createClick(button)) => {
     for (const listener of Array.from(button.listeners)) listener(event)
     // A stopped click never reaches the shell, which would select a panel by id.
     if (!event.propagationStopped) button.shellSelects += 1
@@ -276,12 +285,12 @@ function mountPlugin(storage, dom = createSidebarDom(), options = {}) {
     effect: (fn) => { disposers.push(fn()); return () => {} },
   })
 
-  const rowEntry = registered['sidebar.panellist'].definition
-  assert.equal(rowEntry.name, 'sidebar.panellist')
-  assert.equal(rowEntry.id, 'dsh-plan-spend')
-  assert.equal(rowEntry.order, 20, 'the row sits where the shipped rows do')
-  assert.equal(rowEntry.locale, 'dsh-plan-spend')
-  assert.equal(typeof rowEntry.label, 'function', 'the shell names the row from the dictionary')
+  const row_entry = registered['sidebar.panellist'].definition
+  assert.equal(row_entry.name, 'sidebar.panellist')
+  assert.equal(row_entry.id, 'dsh-plan-spend')
+  assert.equal(row_entry.order, 20, 'the row sits where the shipped rows do')
+  assert.equal(row_entry.locale, 'dsh-plan-spend')
+  assert.equal(typeof row_entry.label, 'function', 'the shell names the row from the dictionary')
   assert.deepEqual(registered['shell.overlay'].definition, {
     name: 'shell.overlay', id: 'dsh-plan-spend', order: 30,
   })
@@ -367,12 +376,18 @@ function mountPlugin(storage, dom = createSidebarDom(), options = {}) {
       return {
         element: doc.conversationBodies[0],
         /** Moves the body the way a header that grows with the tab strip does. */
-        move({ top: nextTop = box.top, left: nextLeft = box.left } = {}) { box.top = nextTop; box.left = nextLeft },
+        move({ top: next_top = box.top, left: next_left = box.left } = {}) { box.top = next_top; box.left = next_left },
       }
     },
-    /** Clicks the sidebar row, which is also the panel's trigger. */
+    /**
+     * Clicks the sidebar row: the document's capture listeners see the click
+     * first, then it reaches the row and whatever the shell delegates there.
+     */
     clickRow() {
-      return dom.button.dispatchClick()
+      const event = createClick(dom.button)
+      doc.dispatch('click', event)
+      if (event.propagationStopped) return event
+      return dom.button.dispatchClick(event)
     },
     openPanel() {
       harness.clickRow()
@@ -509,6 +524,9 @@ test('clicking the row toggles the panel instead of selecting a panel by id', ()
   harness.settle()
   assert.equal(event.defaultPrevented, true)
   assert.equal(event.propagationStopped, true)
+  // The guard claims the click in the capture phase, so it runs before whatever
+  // the shell delegates at its React root, wherever that root is mounted.
+  assert.deepEqual(harness.doc.listenerPhases('click'), [true])
   assert.equal(harness.dom.button.shellSelects, 0, 'the shell never selects this row')
   assert.ok(harness.panel.tree, 'the panel opens')
 
@@ -725,15 +743,18 @@ test('the dismiss listeners exist only while the panel is open', () => {
   const harness = mountPlugin(createStorage())
   harness.installDom()
   harness.settle()
-  assert.equal(harness.doc.count(), 0, 'no listener while closed')
+  // The row claims its click for as long as it is mounted, so only the
+  // dismissal listeners are expected to come and go with the panel.
+  assert.deepEqual(harness.doc.listenerPhases('click'), [true], 'the row guard is always on')
+  assert.equal(harness.doc.count(), 1, 'no dismiss listener while closed')
 
   harness.openPanel()
-  assert.equal(harness.doc.count(), 2, 'keydown plus pointerdown')
+  assert.equal(harness.doc.count(), 3, 'the row guard, keydown and pointerdown')
 
   const header = panelOf(harness).props.children[0]
   header.props.children[3].props.onClick()
   harness.settle()
-  assert.equal(harness.doc.count(), 0, 'closing removes both')
+  assert.equal(harness.doc.count(), 1, 'closing removes both dismiss listeners')
 })
 
 test('the entry paints only the glyph and leaves the row to the shell', () => {

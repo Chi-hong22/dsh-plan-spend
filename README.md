@@ -125,9 +125,9 @@ The plugin registers two seats:
   the gauge glyph at the size the shell hands down — **16px** on the sidebar,
   **18px** on the collapsed rail (`{ size, active }`) — and adds no pixels of its
   own. Clicking the row would normally make the shell select `dsh-plan-spend` as
-  a main panel and throw, because none is registered, so the glyph stops the
-  click on the row element before React's delegated handler sees it and toggles
-  the panel instead.
+  a main panel and throw, because none is registered, so the glyph claims the
+  click in the document's capture phase — ahead of any delegated handler, under
+  whatever root the shell mounts its tree — and toggles the panel instead.
 - **`shell.overlay`** (id `dsh-plan-spend`): the panel. The frame-wide layer sits
   outside every column, so the panel renders *beside* the sidebar instead of
   being clipped by the sidebar's `overflow: hidden`.
