@@ -646,7 +646,7 @@ function openWithSnapshot(cards) {
   return harness
 }
 
-test('the account card renders the recharge balance and nothing else', async () => {
+test('the account card renders the recharge balance and no bonus row when there is none', async () => {
   const harness = openWithSnapshot([
     {
       id: 'deepseek-official',
@@ -662,8 +662,48 @@ test('the account card renders the recharge balance and nothing else', async () 
   assert.match(text, /账号登录/)
   assert.match(text, /充值余额/)
   assert.match(text, /12\.34/)
-  assert.doesNotMatch(text, /赠/, '赠金 never reaches a card')
+  assert.doesNotMatch(text, /赠金/, 'no bonus row without a granted wallet')
   assert.doesNotMatch(text, /充值 ¥/, 'the account card carries no topped-up split')
+})
+
+test('a granted wallet renders as its own row below the recharge balance', async () => {
+  const harness = openWithSnapshot([
+    {
+      id: 'deepseek-official',
+      displayName: 'DeepSeek 官方',
+      source: 'account',
+      configured: true,
+      data: {
+        kind: 'balance',
+        label: 'balance.recharge',
+        wallets: [{ currency: 'CNY', total: '1.12', granted: '0.50' }],
+      },
+    },
+  ])
+  await flush()
+
+  const text = panelText(harness)
+  assert.match(text, /赠金 ¥0\.50/)
+  assert.ok(text.indexOf('充值余额') < text.indexOf('赠金'), 'the bonus row follows the recharge row')
+})
+
+test('a granted wallet of zero renders no bonus row', async () => {
+  const harness = openWithSnapshot([
+    {
+      id: 'deepseek-official',
+      displayName: 'DeepSeek 官方',
+      source: 'account',
+      configured: true,
+      data: {
+        kind: 'balance',
+        label: 'balance.recharge',
+        wallets: [{ currency: 'CNY', total: '1.12', granted: '0.00' }],
+      },
+    },
+  ])
+  await flush()
+
+  assert.doesNotMatch(panelText(harness), /赠金/)
 })
 
 test('the API-key card keeps its total and topped-up split', async () => {

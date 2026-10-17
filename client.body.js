@@ -372,15 +372,23 @@ function BalanceBody(props) {
   const wallets = data.wallets || []
   if (wallets.length === 0) return React.createElement('div', { className: 'um-muted' }, t('balance.empty'))
   return React.createElement('div', { className: 'um-balances' },
-    wallets.map((wallet) => React.createElement('div', { className: 'um-balance', key: wallet.currency || 'default' },
-      React.createElement('div', { className: 'um-balance-total' },
-        React.createElement('span', { className: 'um-balance-label' }, t(data.label || 'balance.total')),
-        React.createElement('span', { className: 'um-balance-amount' }, formatAmount(wallet.total, wallet.currency))),
-      typeof wallet.toppedUp === 'string'
-        ? React.createElement('div', { className: 'um-balance-split' },
-          React.createElement('span', null, t('balance.toppedUp') + ' ' + formatAmount(wallet.toppedUp, wallet.currency)))
-        : null,
-    )),
+    wallets.map((wallet) => {
+      const bonus = typeof wallet.granted === 'string' ? Number(wallet.granted) : 0
+      return React.createElement('div', { className: 'um-balance', key: wallet.currency || 'default' },
+        React.createElement('div', { className: 'um-balance-total' },
+          React.createElement('span', { className: 'um-balance-label' }, t(data.label || 'balance.total')),
+          React.createElement('span', { className: 'um-balance-amount' }, formatAmount(wallet.total, wallet.currency))),
+        typeof wallet.toppedUp === 'string'
+          ? React.createElement('div', { className: 'um-balance-split' },
+            React.createElement('span', null, t('balance.toppedUp') + ' ' + formatAmount(wallet.toppedUp, wallet.currency)))
+          : null,
+        bonus > 0
+          ? React.createElement('div', { className: 'um-balance-total um-balance-granted' },
+            React.createElement('span', { className: 'um-balance-label' }, t('balance.granted')),
+            React.createElement('span', { className: 'um-balance-amount' }, formatAmount(wallet.granted, wallet.currency)))
+          : null,
+      )
+    }),
     data.isAvailable === false
       ? React.createElement('div', { className: 'um-warn' }, t('balance.unavailable'))
       : null,
@@ -793,6 +801,7 @@ const ZH_DICT = {
   'balance.total': '总余额',
   'balance.recharge': '充值余额',
   'balance.toppedUp': '充值',
+  'balance.granted': '赠金',
   'balance.empty': '没有余额信息。',
   'balance.unavailable': '余额不足，API 调用可能失败。',
   'window.rolling': '5 小时',
@@ -830,6 +839,7 @@ const EN_DICT = {
   'balance.total': 'Total',
   'balance.recharge': 'Recharge balance',
   'balance.toppedUp': 'Topped up',
+  'balance.granted': 'Granted',
   'balance.empty': 'No balance information.',
   'balance.unavailable': 'Balance is insufficient; API calls may fail.',
   'window.rolling': '5 hours',
@@ -872,6 +882,7 @@ const UM_CSS = `
 .um-balance-label { font-size: 12px; color: var(--dsw-alias-label-secondary); }
 .um-balance-amount { font-size: 17px; font-weight: 650; font-variant-numeric: tabular-nums; }
 .um-balance-split { display: flex; justify-content: space-between; gap: 10px; font-size: 11px; color: var(--dsw-alias-label-secondary); font-variant-numeric: tabular-nums; }
+.um-balance-granted .um-balance-amount { font-size: 13px; font-weight: 400; color: var(--dsw-alias-label-secondary); }
 .um-windows { display: flex; flex-direction: column; gap: 10px; }
 .um-window-head { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
 .um-window-name { font-size: 12px; color: var(--dsw-alias-label-secondary); }

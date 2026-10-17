@@ -6,11 +6,12 @@ DSH 用量弹窗插件：在 Web GUI 的全局浮层里放一个「用量」按�
 
 | 服务商 | 数据源 | 展示 |
 |---|---|---|
-| DeepSeek 官方 | DeepSeek **账号登录**授权：Host 半包用 `ctx.deepseekAccount.resolveToken` 取授权，带 `x-dsh-auth-token` 请求 `GET https://api.deepseek.com/user/balance`（不需要 API key）；回落到同一接口 + `DEEPSEEK_API_KEY` | 充值余额（保留服务端精度）、兜底卡上的充值拆分、余额是否充足、这个数字来自哪条路由，以及**高峰/低谷时段**与下次切换倒计时 |
+| DeepSeek 官方 | DeepSeek **账号登录**授权：Host 半包用 `ctx.deepseekAccount.resolveToken` 取授权，带 `x-dsh-auth-token` 请求 `GET https://api.deepseek.com/user/balance`（不需要 API key）；回落到同一接口 + `DEEPSEEK_API_KEY` | 充值余额（保留服务端精度）、兜底卡上的充值拆分、赠金（账户持有时显示）、余额是否充足、这个数字来自哪条路由，以及**高峰/低谷时段**与下次切换倒计时 |
 | OpenCode Go | `GET https://opencode.ai/zen/go/v1/usage` | 5 小时 / 7 天 / 每月三个窗口的已用百分比、进度条、重置倒计时 |
 
-**赠金不展示**：赠送额度是促销性质、会过期，不属于套餐额度；API key 兜底卡不再映射
-`granted_balance`，账号卡只读充值钱包 `topped_up_balance`。
+**赠金单独占一行**：赠送额度是促销性质、会过期，不属于套餐额度，所以不计入充值余额；
+账户确实有赠金时，卡片在充值余额下面多一行「赠金」，为 0 时这一行不出现。
+两条路由都映射 `granted_balance`，账号卡的头行数字仍只取 `topped_up_balance`。
 
 **已知限制**：OpenCode Go 的用量接口只返回百分比与重置时间，**不返回已用/上限金额**。所以弹窗里 OpenCode 一栏只有百分比，没有「还剩多少美元」。确切金额只在 OpenCode 控制台可见。
 

@@ -7,12 +7,14 @@ opens a panel showing the plan spend of the **configured** providers.
 
 | Provider | Source | Rendered |
 |---|---|---|
-| DeepSeek official | the DeepSeek **account sign-in**: the host half asks `ctx.deepseekAccount.resolveToken` for the grant and calls `GET https://api.deepseek.com/user/balance` with `x-dsh-auth-token`; falls back to the same endpoint with `DEEPSEEK_API_KEY` | recharge balance (server precision kept), the topped-up split on the fallback card, the sufficiency flag, which route the number came from, and the **peak / off-peak** window with its next switch |
+| DeepSeek official | the DeepSeek **account sign-in**: the host half asks `ctx.deepseekAccount.resolveToken` for the grant and calls `GET https://api.deepseek.com/user/balance` with `x-dsh-auth-token`; falls back to the same endpoint with `DEEPSEEK_API_KEY` | recharge balance (server precision kept), the topped-up split on the fallback card, the bonus wallet when the account holds one, the sufficiency flag, which route the number came from, and the **peak / off-peak** window with its next switch |
 | OpenCode Go | `GET https://opencode.ai/zen/go/v1/usage` | 5-hour / 7-day / monthly used percentage, progress bar, reset countdown |
 
-**赠金 (granted credit) is not shown.** It is promotional and short-lived, so it
-is not plan balance: the API-key card does not map `granted_balance`, and the
-account card reads the recharge wallet (`topped_up_balance`) alone.
+**赠金 (granted credit) gets its own row.** It is promotional and short-lived,
+so it is not plan balance and does not count towards the recharge balance: when
+the account actually holds some, the card adds a 赠金 line under the recharge
+balance and hides it again at zero. Both routes map `granted_balance`; the
+account card's headline figure still comes from `topped_up_balance` alone.
 
 **Known limitation**: the OpenCode Go usage endpoint returns percentages and
 reset instants only — no used/limit amounts. That column is therefore

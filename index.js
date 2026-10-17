@@ -21,9 +21,10 @@
  *   `percent` and a `resetsAt` instant. The endpoint reports percentages only —
  *   no used/limit amount — and needs no `x-opencode-session` header.
  *
- * 赠金 is deliberately not part of any card: it is promotional and
- * short-lived, so it is not plan balance. `granted_balance` is never mapped,
- * and the account card reads the recharge wallet (`topped_up_balance`) alone.
+ * Both DeepSeek routes carry the bonus wallet (`granted_balance`) beside the
+ * recharge one so the popup can show 赠金 when the account actually holds some;
+ * the account card still headlines `topped_up_balance`, so the bonus never
+ * inflates it.
  *
  * A provider whose credential reference is not configured yields a card with
  * `configured: false` instead of a request, which is what makes the popup
@@ -104,8 +105,7 @@ async function fetchJson(url, headers) {
 
 /**
  * Shapes `/user/balance` into the API-key card payload: the total balance with
- * its topped-up split. Amounts stay server strings, and `granted_balance` is
- * not mapped on purpose — 赠金 is not plan balance.
+ * its topped-up split and the bonus wallet. Amounts stay server strings.
  */
 async function readDeepSeekBalance(apiKey) {
   const body = await fetchJson(DEEPSEEK_BALANCE_URL, { authorization: `Bearer ${apiKey}` })
@@ -117,6 +117,7 @@ async function readDeepSeekBalance(apiKey) {
       currency: currencyOf(wallet),
       total: amountOf(wallet, 'total_balance'),
       toppedUp: amountOf(wallet, 'topped_up_balance'),
+      granted: amountOf(wallet, 'granted_balance'),
     })),
   }
 }
@@ -142,11 +143,12 @@ async function readAccountBalance(ctx) {
     kind: 'balance',
     label: 'balance.recharge',
     isAvailable: body?.is_available === true,
-    // The account route shows the recharge wallet alone: the bonus wallet is
-    // the same 赠金 the API-key card deliberately drops.
+    // The account route headlines the recharge wallet; the bonus wallet rides
+    // along as its own amount, which the popup shows only when it is non-zero.
     wallets: balanceWallets(body).map((wallet) => ({
       currency: currencyOf(wallet),
       total: amountOf(wallet, 'topped_up_balance'),
+      granted: amountOf(wallet, 'granted_balance'),
     })),
   }
 }

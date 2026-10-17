@@ -5,7 +5,7 @@
  * with a stub response, and `fetch` is replaced so both upstream readers are
  * exercised without network access. What is under test here is the card
  * payload: which provider resolves to which card, what a failure looks like,
- * and that 赠金 never reaches a card.
+ * and which wallet amounts reach a card.
  */
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
@@ -84,7 +84,7 @@ function routeHarness({ resolve, describe, account }) {
 
 const bothConfigured = async () => ({ value: 'secret' })
 
-test('both providers map to cards, and 赠金 never reaches the balance payload', async () => {
+test('both providers map to cards, and 赠金 reaches the balance payload', async () => {
   const fetcher = stubFetch({
     'https://api.deepseek.com/user/balance': { body: BALANCE_BODY },
     'https://opencode.ai/zen/go/v1/usage': { body: USAGE_BODY },
@@ -100,9 +100,9 @@ test('both providers map to cards, and 赠金 never reaches the balance payload'
     assert.equal(deepseek.source, 'api-key')
     assert.equal(deepseek.credentialSource, 'stored-file')
     assert.equal(deepseek.credentialWritable, true)
-    assert.deepEqual(deepseek.data.wallets, [{ currency: 'CNY', total: '3.17', toppedUp: '2.67' }])
-    // 赠金 is promotional, not plan balance: `granted_balance` is not mapped.
-    assert.equal('granted' in deepseek.data.wallets[0], false)
+    assert.deepEqual(deepseek.data.wallets, [{ currency: 'CNY', total: '3.17', toppedUp: '2.67', granted: '0.50' }])
+    // 赠金 rides along so the popup can put it under the topped-up wallet.
+    assert.equal(deepseek.data.wallets[0].granted, '0.50')
 
     const opencode = snapshot.cards[1]
     assert.deepEqual(opencode.data.windows.map((window) => [window.id, window.percent]),
@@ -242,8 +242,8 @@ test('the account route supplies the DeepSeek card and skips the API key entirel
     assert.equal(deepseek.source, 'account')
     assert.equal(deepseek.configured, true)
     assert.equal(deepseek.data.label, 'balance.recharge')
-    // The recharge wallet alone: granted credit never reaches a card.
-    assert.deepEqual(deepseek.data.wallets, [{ currency: 'CNY', total: '2.67' }])
+    // The recharge wallet leads; the bonus wallet rides along beside it.
+    assert.deepEqual(deepseek.data.wallets, [{ currency: 'CNY', total: '2.67', granted: '0.50' }])
     assert.equal(deepseek.accountError, undefined)
     assert.deepEqual(calls, ['https://api.deepseek.com/user/balance'])
     assert.equal(snapshot.cards[1].data.kind, 'quota-windows')
@@ -290,7 +290,7 @@ test('a signed-out account falls back to the API-key card', async () => {
     const deepseek = snapshot.cards[0]
     assert.equal(deepseek.source, 'api-key')
     assert.equal(deepseek.data.label, 'balance.total')
-    assert.deepEqual(deepseek.data.wallets, [{ currency: 'CNY', total: '3.17', toppedUp: '2.67' }])
+    assert.deepEqual(deepseek.data.wallets, [{ currency: 'CNY', total: '3.17', toppedUp: '2.67', granted: '0.50' }])
     assert.equal(deepseek.accountError, undefined)
   } finally {
     fetcher.restore()
