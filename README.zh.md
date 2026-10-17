@@ -119,6 +119,9 @@ API key 读失败或未配置时，卡上还会显示生效凭据的**来源层*
 **缩放**：手柄在面板**右上角**（离按钮最远的那个角），向右拖增宽、向上拖增高；尺寸存
 `localStorage: dsh-plan-spend.size`，并受面板最小尺寸与浮层边界双重约束。
 
+**键盘**：打开后焦点进入面板，`Esc` 关闭并把焦点还给按钮；`Tab` 可到达手柄，方向键按 16px
+步进缩放，按住 `Shift` 步进放大四倍。
+
 想恢复默认尺寸，清掉 `dsh-plan-spend.size`。改完源码运行 `npm run build` 重新生成 `client.js`；
 `client.js` 是构建产物，不要直接编辑。
 
@@ -148,10 +151,15 @@ index.js              Host 半包：凭据解析 + 两个上游接口 + 30s 缓�
 client.body.js        Client 半包源码（裸函数体，无 import/JSX）
 client.js             构建产物（scripts/build-client.mjs 生成）
 cordis.patch.yml      bundle patch：向 profile 插入一行
+locale/               插件管理器读取的显示名称与描述（en、zh）
 scripts/build-client.mjs
+scripts/render-client.mjs   构建与漂移测试共用的模板
 scripts/probe-sources.ps1   一次性探针：不开插件直接验证两个上游接口
-tests/client-ui.test.mjs    触发器/定位/缩放 + 账号路由卡片测试（npm test）
+tests/client-ui.test.mjs    触发器/定位/缩放/峰谷 + 账号路由卡片测试（npm test）
 tests/host-snapshot.test.mjs Host 路由载荷测试（npm test）
+tests/build-drift.test.mjs  client.js 必须与 client.body.js 一致（npm test）
+tests/plugin-meta.test.mjs  双语显示元数据（npm test）
+.github/workflows/test.yml  CI：npm test + 重建漂移检查
 ```
 
 ## License
