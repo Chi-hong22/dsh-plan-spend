@@ -58,6 +58,8 @@ const UM_ICON_SIZE = 32
 const UM_LABEL_GAP_PX = 8
 /** The panel's DOM id, so the trigger can point `aria-controls` at it. */
 const UM_PANEL_ID = 'dsh-plan-spend-panel'
+/** The heading the dialog is labelled by, instead of a duplicate aria-label. */
+const UM_PANEL_TITLE_ID = 'dsh-plan-spend-panel-title'
 /** Arrow-key resize step; Shift makes it four times larger. */
 const UM_KEYBOARD_RESIZE_STEP = 16
 
@@ -850,11 +852,14 @@ function UsagePanel(props) {
       id: UM_PANEL_ID,
       role: 'dialog',
       tabIndex: -1,
-      'aria-label': t('panel.title'),
+      // Labelled by the visible heading. It is deliberately not aria-modal: the
+      // page behind stays operable (outside presses close it), so claiming
+      // modality would hide live content from assistive tech.
+      'aria-labelledby': UM_PANEL_TITLE_ID,
       style: panelStyle,
     },
       React.createElement('header', { className: 'um-panel-head' },
-        React.createElement('span', { className: 'um-panel-title' }, t('panel.title')),
+        React.createElement('span', { className: 'um-panel-title', id: UM_PANEL_TITLE_ID }, t('panel.title')),
         React.createElement('span', { className: 'um-panel-stamp' },
           state.data && state.data.generatedAt ? formatClock(state.data.generatedAt) : ''),
         React.createElement('button', {

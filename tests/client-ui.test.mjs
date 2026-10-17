@@ -1128,7 +1128,7 @@ test('opening the panel moves focus into it and closing returns it to the trigge
   assert.equal(harness.dom.focused, 'button')
 })
 
-test('the trigger points at the dialog it controls and the dialog can take focus', () => {
+test('the trigger points at the dialog it controls, which is labelled by its heading', () => {
   const harness = mountPlugin(createStorage())
   harness.installDom()
   harness.settle()
@@ -1138,6 +1138,11 @@ test('the trigger points at the dialog it controls and the dialog can take focus
   assert.equal(panel.props.id, 'dsh-plan-spend-panel')
   assert.equal(panel.props.tabIndex, -1)
   assert.equal(harness.trigger.tree.props['aria-controls'], 'dsh-plan-spend-panel')
+
+  const heading = panel.props.children[0].props.children[0]
+  assert.equal(heading.props.id, 'dsh-plan-spend-panel-title')
+  assert.equal(panel.props['aria-labelledby'], 'dsh-plan-spend-panel-title')
+  assert.equal(panel.props['aria-modal'], undefined, 'the panel is a non-modal popover')
 })
 
 test('the grip resizes with the arrow keys and stores the result', () => {
