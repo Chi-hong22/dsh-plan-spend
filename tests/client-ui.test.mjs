@@ -1168,3 +1168,50 @@ test('the grip resizes with the arrow keys and stores the result', () => {
   harness.settle()
   assert.equal(panelOf(harness).props.style.width, '410px')
 })
+
+/** The header's refresh button (title, stamp, refresh, close). */
+function refreshButton(harness) {
+  return panelOf(harness).props.children[0].props.children[2]
+}
+
+test('a stored size larger than the measured placement is clamped on screen', () => {
+  const storage = createStorage({ 'dsh-plan-spend.size': JSON.stringify({ width: 1000, height: 1000 }) })
+  const harness = mountPlugin(storage)
+  harness.installDom()
+  harness.settle()
+  harness.openPanel()
+
+  const style = panelOf(harness).props.style
+  assert.deepEqual({ width: style.width, height: style.height }, { width: '902px', height: '736px' })
+})
+
+test('a slower earlier response cannot overwrite the newer snapshot', async () => {
+  const pending = []
+  const harness = mountPlugin(createStorage(), createSidebarDom(), {
+    fetch: () => new Promise((resolve) => { pending.push(resolve) }),
+  })
+  const card = (total) => ({
+    id: 'deepseek-official',
+    displayName: 'DeepSeek 官方',
+    configured: true,
+    data: { kind: 'balance', label: 'balance.total', wallets: [{ currency: 'CNY', total }] },
+  })
+
+  harness.installDom()
+  harness.settle()
+  harness.openPanel()
+  assert.equal(pending.length, 1)
+
+  refreshButton(harness).props.onClick()
+  harness.settle()
+  assert.equal(pending.length, 2)
+
+  pending[1]({ ok: true, json: () => Promise.resolve({ generatedAt: 1_700_000_000_000, cards: [card('later')] }) })
+  await flush()
+  assert.match(panelText(harness), /later/)
+
+  pending[0]({ ok: true, json: () => Promise.resolve({ generatedAt: 1_600_000_000_000, cards: [card('earlier')] }) })
+  await flush()
+  assert.match(panelText(harness), /later/)
+  assert.doesNotMatch(panelText(harness), /earlier/)
+})

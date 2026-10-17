@@ -624,6 +624,9 @@ function UsagePanel(props) {
   const rootRef = React.useRef(null)
   const panelRef = React.useRef(null)
   const resizeRef = React.useRef(null)
+  // Only the newest load may publish: the 60s tick, a manual refresh and a
+  // reopening can overlap, and an older response must not overwrite a newer one.
+  const requestSeq = React.useRef(0)
 
   React.useEffect(() => store.subscribe(() => {
     setOpen(store.isOpen())
@@ -638,6 +641,8 @@ function UsagePanel(props) {
   }, [])
 
   const load = React.useCallback((force) => {
+    const request = requestSeq.current + 1
+    requestSeq.current = request
     setState((previous) => ({ ...previous, phase: 'loading' }))
     // One source: the host half reads both routes and decides which one the
     // DeepSeek card speaks for, so this half only renders what it is told.
@@ -660,8 +665,13 @@ function UsagePanel(props) {
           })
       })
       .then(
-        (data) => setState({ phase: 'ready', data, error: null }),
-        (error) => setState((previous) => ({ ...previous, phase: 'failed', error: errorText(error, t) })),
+        (data) => {
+          if (request === requestSeq.current) setState({ phase: 'ready', data, error: null })
+        },
+        (error) => {
+          if (request !== requestSeq.current) return
+          setState((previous) => ({ ...previous, phase: 'failed', error: errorText(error, t) }))
+        },
       )
   }, [t])
 
@@ -825,9 +835,11 @@ function UsagePanel(props) {
       maxWidth: placement.maxWidth + 'px',
     }
     : { left: '64px', bottom: '16px' }
+  // A stored size can predate this window's placement; clamp the box to the
+  // space the layer measured so the panel never hangs past its anchor.
   const panelStyle = {
-    width: width + 'px',
-    height: height + 'px',
+    width: Math.min(width, placement ? placement.maxWidth : width) + 'px',
+    height: Math.min(height, placement ? placement.maxHeight : height) + 'px',
     maxHeight: placement ? placement.maxHeight + 'px' : undefined,
   }
 
