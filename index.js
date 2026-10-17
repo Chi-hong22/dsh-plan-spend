@@ -241,22 +241,19 @@ async function buildSnapshot(ctx) {
   const cards = await Promise.all(ADAPTERS.map(async (adapter) => {
     const card = { id: adapter.id, displayName: adapter.displayName, configured: true }
     if (adapter.source !== undefined) card.source = adapter.source
-    let accountFailure
+    let account_failure
     if (adapter.readAccount !== undefined) {
       try {
         const account = await adapter.readAccount(ctx)
         if (account !== null) return { ...card, source: 'account', data: account }
       } catch (error) {
-        const failure = failureOf(error)
-        accountFailure = {
-          accountError: failure.error,
-          accountErrorCode: failure.errorCode,
-          accountErrorStatus: failure.status,
-        }
+        // Kept whole: the client feeds this object straight to failureText
+        // instead of re-assembling three renamed fields.
+        account_failure = failureOf(error)
       }
     }
     const fallback = await readCredentialCard(ctx, adapter, card)
-    return accountFailure === undefined ? fallback : { ...fallback, ...accountFailure }
+    return account_failure === undefined ? fallback : { ...fallback, accountFailure: account_failure }
   }))
   return { generatedAt: Date.now(), cards }
 }
@@ -298,7 +295,7 @@ export function apply(ctx) {
     path: ROUTE,
     handler: async (req, res) => {
       if (req.method !== 'GET') {
-        sendJson(res, 405, { error: 'method not allowed' }, { allow: 'GET' })
+        sendJson(res, 405, { error: 'method not allowed', errorCode: 'http', status: 405 }, { allow: 'GET' })
         return
       }
       try {

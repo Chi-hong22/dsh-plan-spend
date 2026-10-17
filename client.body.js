@@ -510,10 +510,12 @@ function PeakRow(props) {
 function ProviderCard(props) {
   const { card, t, now } = props
   let body
-  if (!card.configured) {
-    body = React.createElement('div', { className: 'um-muted' }, t('card.notConfigured'))
-  } else if (card.error) {
+  if (card.error) {
+    // The host pairs a failure with its reason; showing "not configured" first
+    // would hide the reason it sent alongside.
     body = React.createElement('div', { className: 'um-error' }, failureText(card, t))
+  } else if (!card.configured) {
+    body = React.createElement('div', { className: 'um-muted' }, t('card.notConfigured'))
   } else if (!card.data) {
     body = React.createElement('div', { className: 'um-muted' }, t('card.noData'))
   } else if (card.data.kind === 'balance') {
@@ -525,15 +527,9 @@ function ProviderCard(props) {
     ? t('source.account')
     : card.source === 'api-key' ? t('source.apiKey') : ''
   const hint = credentialHint(card, t)
-  const accountFailure = typeof card.accountError === 'string'
-    ? failureText({
-      error: card.accountError,
-      errorCode: card.accountErrorCode,
-      status: card.accountErrorStatus,
-    }, t)
-    : ''
-  const accountNote = accountFailure
-    ? t('source.accountFailed').replace('{error}', accountFailure)
+  const account_failure = failureText(card.accountFailure, t)
+  const account_note = account_failure
+    ? t('source.accountFailed').replace('{error}', account_failure)
     : ''
   return React.createElement('section', { className: 'um-card' + (card.configured ? '' : ' um-card-off') },
     React.createElement('h4', { className: 'um-card-title' },
@@ -542,7 +538,7 @@ function ProviderCard(props) {
     body,
     card.id === UM_PEAK_CARD_ID ? React.createElement(PeakRow, { now, t }) : null,
     hint ? React.createElement('div', { className: 'um-card-hint' }, hint) : null,
-    accountNote ? React.createElement('div', { className: 'um-card-hint' }, accountNote) : null,
+    account_note ? React.createElement('div', { className: 'um-card-hint' }, account_note) : null,
   )
 }
 

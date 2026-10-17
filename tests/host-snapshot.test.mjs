@@ -75,9 +75,10 @@ function routeHarness({ resolve, describe, account }) {
     async method(method) {
       let status = null
       let headers = null
-      const res = { writeHead(code, sent) { status = code; headers = sent }, end() {} }
+      let payload = null
+      const res = { writeHead(code, sent) { status = code; headers = sent }, end(body) { payload = JSON.parse(body) } }
       await route.handler({ method, url: '/dsh-plan-spend/snapshot' }, res)
-      return { status, headers }
+      return { status, headers, payload }
     },
     route,
   }
@@ -250,6 +251,8 @@ test('only GET reaches the readers', async () => {
     const refused = await harness.method('POST')
     assert.equal(refused.status, 405)
     assert.equal(refused.headers.allow, 'GET')
+    assert.equal(refused.payload.errorCode, 'http')
+    assert.equal(refused.payload.status, 405)
     assert.deepEqual(fetcher.calls, [])
   } finally {
     fetcher.restore()
@@ -356,9 +359,9 @@ test('a failed account query falls back and reports the failure on the card', as
     const snapshot = await harness.read()
 
     assert.equal(snapshot.cards[0].source, 'api-key')
-    assert.equal(snapshot.cards[0].accountError, 'HTTP 429')
-    assert.equal(snapshot.cards[0].accountErrorCode, 'http')
-    assert.equal(snapshot.cards[0].accountErrorStatus, 429)
+    assert.equal(snapshot.cards[0].accountFailure.error, 'HTTP 429')
+    assert.equal(snapshot.cards[0].accountFailure.errorCode, 'http')
+    assert.equal(snapshot.cards[0].accountFailure.status, 429)
     assert.equal(snapshot.cards[0].data.kind, 'balance')
   } finally {
     globalThis.fetch = original
@@ -378,8 +381,8 @@ test('a throwing token resolution is reported instead of failing the snapshot', 
     const snapshot = await harness.read()
 
     assert.equal(snapshot.cards[0].source, 'api-key')
-    assert.equal(snapshot.cards[0].accountError, 'account: storage')
-    assert.equal(snapshot.cards[0].accountErrorCode, 'unknown')
+    assert.equal(snapshot.cards[0].accountFailure.error, 'account: storage')
+    assert.equal(snapshot.cards[0].accountFailure.errorCode, 'unknown')
     assert.equal(snapshot.cards[1].data.kind, 'quota-windows')
   } finally {
     fetcher.restore()
@@ -396,7 +399,7 @@ test('a composition with no account service still reads the API key', async () =
     const snapshot = await harness.read()
 
     assert.equal(snapshot.cards[0].source, 'api-key')
-    assert.equal(snapshot.cards[0].accountError, undefined)
+    assert.equal(snapshot.cards[0].accountFailure, undefined)
     assert.equal(snapshot.cards[0].data.kind, 'balance')
   } finally {
     fetcher.restore()

@@ -771,7 +771,7 @@ test('a failed account query is reported once on the fallback card', async () =>
       displayName: 'DeepSeek 官方',
       source: 'api-key',
       configured: true,
-      accountError: 'HTTP 429',
+      accountFailure: { error: 'HTTP 429' },
       data: { kind: 'balance', label: 'balance.total', wallets: [{ currency: 'CNY', total: '3.17' }] },
     },
   ])
@@ -781,6 +781,23 @@ test('a failed account query is reported once on the fallback card', async () =>
   assert.match(text, /3\.17/)
   assert.match(text, /账号余额读取失败：HTTP 429/)
   assert.equal(text.split('账号余额读取失败').length - 1, 1, 'the note is written once')
+})
+
+test('an unreadable credential shows its reason instead of "not configured"', async () => {
+  const harness = openWithSnapshot([
+    {
+      id: 'deepseek-official',
+      displayName: 'DeepSeek 官方',
+      configured: false,
+      error: 'credentials: storage',
+      errorCode: 'unknown',
+    },
+  ])
+  await flush()
+
+  const text = panelText(harness)
+  assert.match(text, /credentials: storage/)
+  assert.doesNotMatch(text, /未配置/)
 })
 
 test('host cards render as sent, including the quota windows', async () => {
@@ -1105,9 +1122,7 @@ test('a coded account failure is localized inside the account note', async () =>
     source: 'api-key',
     configured: true,
     data: { kind: 'balance', label: 'balance.total', wallets: [] },
-    accountError: 'HTTP 429',
-    accountErrorCode: 'http',
-    accountErrorStatus: 429,
+    accountFailure: { error: 'HTTP 429', errorCode: 'http', status: 429 },
   }])
   await flush()
 
