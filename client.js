@@ -607,7 +607,8 @@ function UsageTrigger(props) {
     'aria-label': t('button.title'),
     'aria-expanded': open,
     'aria-haspopup': 'dialog',
-    'aria-controls': UM_PANEL_ID,
+    // Only point at the panel while it exists: a dangling IDREF is an error.
+    'aria-controls': open ? UM_PANEL_ID : undefined,
     onClick: () => store.toggle(),
   },
     React.createElement('svg', {
@@ -851,9 +852,11 @@ function UsagePanel(props) {
   // A stored size can predate this window's placement; clamp the box to the
   // space the layer measured so the panel never hangs past its anchor.
   const panel_bounds = placementBounds(placement) || { width, height }
+  const shown_width = Math.min(width, panel_bounds.width)
+  const shown_height = Math.min(height, panel_bounds.height)
   const panelStyle = {
-    width: Math.min(width, panel_bounds.width) + 'px',
-    height: Math.min(height, panel_bounds.height) + 'px',
+    width: shown_width + 'px',
+    height: shown_height + 'px',
     maxHeight: placement ? placement.maxHeight + 'px' : undefined,
   }
 
@@ -905,6 +908,10 @@ function UsagePanel(props) {
         'aria-label': t('panel.resize'),
         role: 'separator',
         tabIndex: 0,
+        'aria-valuenow': shown_width,
+        'aria-valuemin': UM_MIN_SIZE.width,
+        'aria-valuemax': Math.max(UM_MIN_SIZE.width, panel_bounds.width),
+        'aria-valuetext': shown_width + ' × ' + shown_height,
         onKeyDown: onHandleKeyDown,
         onPointerDown: onHandlePointerDown,
         onPointerMove: onHandlePointerMove,

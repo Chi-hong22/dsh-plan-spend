@@ -353,6 +353,7 @@ test('registers a trigger in the sidebar footer and a panel in the overlay', () 
   const harness = mountPlugin(createStorage())
   assert.equal(harness.panel.tree, null, 'the panel starts closed')
   assert.equal(harness.trigger.tree.props['aria-expanded'], false)
+  assert.equal(harness.trigger.tree.props['aria-controls'], undefined, 'no dangling IDREF while closed')
   assert.match(harness.trigger.tree.props.className, /um-button/)
 })
 
@@ -1158,6 +1159,12 @@ test('the trigger points at the dialog it controls, which is labelled by its hea
   assert.equal(heading.props.id, 'dsh-plan-spend-panel-title')
   assert.equal(panel.props['aria-labelledby'], 'dsh-plan-spend-panel-title')
   assert.equal(panel.props['aria-modal'], undefined, 'the panel is a non-modal popover')
+
+  const grip = handleOf(harness)
+  assert.equal(grip.props.role, 'separator')
+  assert.equal(grip.props['aria-valuenow'], 330)
+  assert.equal(grip.props['aria-valuemin'], 260)
+  assert.match(grip.props['aria-valuetext'], /330 × 360/)
 })
 
 test('the grip resizes with the arrow keys and stores the result', () => {
