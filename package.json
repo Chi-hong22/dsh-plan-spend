@@ -8,6 +8,7 @@
   "exports": {
     ".": "./index.js",
     "./client": "./client.js",
+    "./locale/*": "./locale/*",
     "./package.json": "./package.json"
   },
   "dsh": {
@@ -32,6 +33,7 @@
     "client.js",
     "client.body.js",
     "cordis.patch.yml",
+    "locale",
     "scripts/build-client.mjs",
     "scripts/render-client.mjs"
   ],
