@@ -43,7 +43,8 @@ window.__ModuleLoader__.load({ id: "@chi-hong22/dsh-plan-spend", factory: (requi
  * `GET /usage-meter/snapshot` on the harness web server, owned by this plugin's
  * host half, which also decides which route answered: the signed-in DeepSeek
  * account's login grant, or the `DEEPSEEK_API_KEY` fallback. No credential ever
- * reaches this file, and 赠金 is never part of any card.
+ * reaches this file; the granted bonus arrives as its own wallet row, so the
+ * card can show it without seeing the key.
  *
  * --- Peak / off-peak ---
  * DeepSeek halves its price outside peak hours, and no endpoint reports which
