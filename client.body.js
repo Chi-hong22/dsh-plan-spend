@@ -102,17 +102,31 @@ function dropStoredKey(key) {
   }
 }
 
+function hasStoredKey(key) {
+  try {
+    return typeof localStorage !== 'undefined' && localStorage.getItem(key) !== null
+  } catch (error) {
+    return false
+  }
+}
+
+/** A stored size that carries at least one usable dimension, else null. */
+function validSize(value) {
+  if (!value) return null
+  const width = Number.isFinite(value.width) && value.width > 0 ? value.width : null
+  const height = Number.isFinite(value.height) && value.height > 0 ? value.height : null
+  return width === null && height === null ? null : { width, height }
+}
+
 function readStoredSize() {
-  const current = readStoredJson(UM_SIZE_KEY)
-  const stored = current || readStoredJson(UM_LEGACY_SIZE_KEY)
-  if (!stored) return null
-  const width = Number.isFinite(stored.width) && stored.width > 0 ? stored.width : null
-  const height = Number.isFinite(stored.height) && stored.height > 0 ? stored.height : null
-  const size = width === null && height === null ? null : { width, height }
+  // An unreadable current value must reset the panel, not resurrect the old
+  // key: otherwise clearing `dsh-plan-spend.size` would stop working.
+  if (hasStoredKey(UM_SIZE_KEY)) return validSize(readStoredJson(UM_SIZE_KEY))
+  const legacy = validSize(readStoredJson(UM_LEGACY_SIZE_KEY))
   // Adopt the pre-rename value under the new key; the mount effect then drops the
   // old one, so clearing the key to reset the panel keeps working.
-  if (size && !current) writeStoredJson(UM_SIZE_KEY, size)
-  return size
+  if (legacy) writeStoredJson(UM_SIZE_KEY, legacy)
+  return legacy
 }
 
 function formatCountdown(target, now) {

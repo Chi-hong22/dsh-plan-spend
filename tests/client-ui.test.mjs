@@ -487,6 +487,22 @@ test('a size stored before the rename is adopted under the new key and dropped',
   assert.equal(storage.raw.has('usage-meter.size'), false)
 })
 
+test('an unreadable current size resets the panel instead of resurrecting the old key', () => {
+  const storage = createStorage({
+    'dsh-plan-spend.size': '{not json',
+    'usage-meter.size': JSON.stringify({ width: 410, height: 290 }),
+  })
+  const harness = mountPlugin(storage)
+  harness.installDom()
+  harness.settle()
+  harness.openPanel()
+
+  const style = panelOf(harness).props.style
+  assert.deepEqual({ width: style.width, height: style.height }, { width: '330px', height: '360px' })
+  assert.equal(storage.raw.has('usage-meter.size'), false, 'the old key is still cleaned up')
+  assert.equal(storage.raw.has('dsh-plan-spend.size'), true, 'the unreadable current key is left in place')
+})
+
 test('the retired manual-position key is dropped once', () => {
   const storage = createStorage({ 'usage-meter.position': JSON.stringify({ x: 10, y: 20 }) })
   const harness = mountPlugin(storage)
