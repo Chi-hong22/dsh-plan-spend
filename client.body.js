@@ -56,6 +56,10 @@ const UM_PANEL_ORDER = 30
 /** The shipped account avatar's box; this row's glyph matches it. */
 const UM_ICON_SIZE = 32
 const UM_LABEL_GAP_PX = 8
+/** The panel's DOM id, so the trigger can point `aria-controls` at it. */
+const UM_PANEL_ID = 'dsh-plan-spend-panel'
+/** Arrow-key resize step; Shift makes it four times larger. */
+const UM_KEYBOARD_RESIZE_STEP = 16
 
 const WINDOW_ORDER = ['rolling', 'weekly', 'monthly']
 
@@ -588,6 +592,7 @@ function UsageTrigger(props) {
     'aria-label': t('button.title'),
     'aria-expanded': open,
     'aria-haspopup': 'dialog',
+    'aria-controls': UM_PANEL_ID,
     onClick: () => store.toggle(),
   },
     React.createElement('svg', {
@@ -721,6 +726,20 @@ function UsagePanel(props) {
     return () => { observer.disconnect(); cancel() }
   }, [open, revision, store])
 
+  // Focus enters the panel on open and returns to the trigger on close, so Esc
+  // does not leave a keyboard user at the top of the document.
+  const wasOpen = React.useRef(false)
+  React.useEffect(() => {
+    if (open) {
+      const panel = panelRef.current
+      if (panel && typeof panel.focus === 'function') panel.focus()
+    } else if (wasOpen.current) {
+      const trigger = store.button()
+      if (trigger && typeof trigger.focus === 'function') trigger.focus()
+    }
+    wasOpen.current = open
+  }, [open, store])
+
   /**
    * The grip sits in the panel's top-right corner — the one farthest from the
    * button — so dragging right grows the width and dragging up grows the height
@@ -776,6 +795,29 @@ function UsagePanel(props) {
   const width = (size && size.width) || UM_DEFAULT_SIZE.width
   const height = (size && size.height) || UM_DEFAULT_SIZE.height
 
+  /**
+   * The grip is the only resize affordance, so it also answers the arrow keys:
+   * Left/Right change the width, Up/Down the height, Shift takes a bigger step.
+   */
+  const onHandleKeyDown = (event) => {
+    const step = event.shiftKey ? UM_KEYBOARD_RESIZE_STEP * 4 : UM_KEYBOARD_RESIZE_STEP
+    const maxWidth = placement ? placement.maxWidth : UM_DEFAULT_SIZE.width
+    const maxHeight = placement ? placement.maxHeight : UM_DEFAULT_SIZE.height
+    const wanted = { width, height }
+    if (event.key === 'ArrowLeft') wanted.width = width - step
+    else if (event.key === 'ArrowRight') wanted.width = width + step
+    else if (event.key === 'ArrowUp') wanted.height = height + step
+    else if (event.key === 'ArrowDown') wanted.height = height - step
+    else return
+    event.preventDefault()
+    const next = {
+      width: clamp(wanted.width, UM_MIN_SIZE.width, maxWidth),
+      height: clamp(wanted.height, UM_MIN_SIZE.height, maxHeight),
+    }
+    setSize(next)
+    writeStoredJson(UM_SIZE_KEY, next)
+  }
+
   const anchorStyle = placement
     ? {
       left: placement.left + 'px',
@@ -793,7 +835,9 @@ function UsagePanel(props) {
     React.createElement('div', {
       className: 'um-panel' + (resizing ? ' um-panel-resizing' : ''),
       ref: panelRef,
+      id: UM_PANEL_ID,
       role: 'dialog',
+      tabIndex: -1,
       'aria-label': t('panel.title'),
       style: panelStyle,
     },
@@ -831,6 +875,8 @@ function UsagePanel(props) {
         title: t('panel.resize'),
         'aria-label': t('panel.resize'),
         role: 'separator',
+        tabIndex: 0,
+        onKeyDown: onHandleKeyDown,
         onPointerDown: onHandlePointerDown,
         onPointerMove: onHandlePointerMove,
         onPointerUp: onHandlePointerUp,
@@ -846,7 +892,7 @@ const ZH_DICT = {
   'panel.title': '套餐用量详细',
   'panel.refresh': '刷新',
   'panel.close': '关闭',
-  'panel.resize': '拖动可调整大小',
+  'panel.resize': '拖动或方向键调整大小',
   'panel.loading': '正在读取…',
   'panel.failed': '读取失败：{reason}',
   'panel.stale': '刷新失败，显示上次数据：{reason}',
@@ -889,7 +935,7 @@ const EN_DICT = {
   'panel.title': 'Plan usage',
   'panel.refresh': 'Refresh',
   'panel.close': 'Close',
-  'panel.resize': 'Drag to resize',
+  'panel.resize': 'Drag, or use the arrow keys, to resize',
   'panel.loading': 'Loading…',
   'panel.failed': 'Request failed: {reason}',
   'panel.stale': 'Refresh failed; showing the last values: {reason}',

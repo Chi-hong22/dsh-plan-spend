@@ -287,6 +287,7 @@ function mountPlugin(storage, dom = createSidebarDom(), options = {}) {
      * anchor measures against, and the panel box the dismiss test inspects.
      */
     installDom() {
+      dom.button.focus = () => { dom.focused = 'button' }
       trigger.tree.props.ref.current = dom.button
       const anchor = panel.tree
       if (!anchor) return
@@ -294,6 +295,7 @@ function mountPlugin(storage, dom = createSidebarDom(), options = {}) {
       anchor.props.children.props.ref.current = {
         getBoundingClientRect: () => ({ left: 0, top: 0, right: 0, bottom: 0, width: 0, height: 0 }),
         contains: (node) => node === dom.panelNode,
+        focus: () => { dom.focused = 'panel' },
       }
     },
     openPanel() {
@@ -1110,4 +1112,59 @@ test('a coded account failure is localized inside the account note', async () =>
   await flush()
 
   assert.match(panelText(harness), /账号余额读取失败：服务端返回 HTTP 429/)
+})
+
+
+test('opening the panel moves focus into it and closing returns it to the trigger', () => {
+  const harness = mountPlugin(createStorage())
+  harness.installDom()
+  harness.settle()
+  harness.openPanel()
+
+  assert.equal(harness.dom.focused, 'panel')
+
+  harness.trigger.tree.props.onClick()
+  harness.settle()
+  assert.equal(harness.dom.focused, 'button')
+})
+
+test('the trigger points at the dialog it controls and the dialog can take focus', () => {
+  const harness = mountPlugin(createStorage())
+  harness.installDom()
+  harness.settle()
+  harness.openPanel()
+
+  const panel = panelOf(harness)
+  assert.equal(panel.props.id, 'dsh-plan-spend-panel')
+  assert.equal(panel.props.tabIndex, -1)
+  assert.equal(harness.trigger.tree.props['aria-controls'], 'dsh-plan-spend-panel')
+})
+
+test('the grip resizes with the arrow keys and stores the result', () => {
+  const storage = createStorage()
+  const harness = mountPlugin(storage)
+  harness.installDom()
+  harness.settle()
+  harness.openPanel()
+
+  assert.equal(handleOf(harness).props.tabIndex, 0)
+
+  const prevented = []
+  handleOf(harness).props.onKeyDown({
+    key: 'ArrowRight',
+    shiftKey: false,
+    preventDefault: () => prevented.push('right'),
+  })
+  harness.settle()
+  assert.deepEqual(prevented, ['right'])
+  assert.equal(panelOf(harness).props.style.width, '346px')
+
+  handleOf(harness).props.onKeyDown({ key: 'ArrowDown', shiftKey: false, preventDefault: () => {} })
+  harness.settle()
+  assert.equal(panelOf(harness).props.style.height, '344px')
+  assert.equal(storage.raw.get('dsh-plan-spend.size'), JSON.stringify({ width: 346, height: 344 }))
+
+  handleOf(harness).props.onKeyDown({ key: 'ArrowRight', shiftKey: true, preventDefault: () => {} })
+  harness.settle()
+  assert.equal(panelOf(harness).props.style.width, '410px')
 })
