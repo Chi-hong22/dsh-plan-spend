@@ -242,7 +242,10 @@ function uncoveredHolidayYear(instant) {
 }
 
 /** Message text of a thrown value, without assuming it is an Error. */
-function errorText(error) {
+function errorText(error, t) {
+  // A rejected fetch carries a bare `TypeError: Failed to fetch`; this is the
+  // only layer that knows the locale, so the network case is named here.
+  if (error instanceof TypeError) return t('panel.networkError')
   return error && error.message ? error.message : String(error)
 }
 
@@ -593,14 +596,25 @@ function UsagePanel(props) {
     // One source: the host half reads both routes and decides which one the
     // DeepSeek card speaks for, so this half only renders what it is told.
     fetch(UM_ROUTE + (force ? '?refresh=1' : ''), { headers: { accept: 'application/json' } })
-      .then(
-        (response) => (response.ok ? response.json() : Promise.reject(new Error('HTTP ' + response.status))),
-      )
+      .then((response) => {
+        if (response.ok) return response.json()
+        // The host already names the failure (`请求超时（15000 ms）`); reading its
+        // body back keeps that instead of flattening every status to `HTTP 500`.
+        return response.json().then(
+          (body) => {
+            const reason = body && typeof body.error === 'string' ? body.error : 'HTTP ' + response.status
+            throw new Error(reason)
+          },
+          () => {
+            throw new Error('HTTP ' + response.status)
+          },
+        )
+      })
       .then(
         (data) => setState({ phase: 'ready', data, error: null }),
-        (error) => setState({ phase: 'failed', data: null, error: errorText(error) }),
+        (error) => setState((previous) => ({ ...previous, phase: 'failed', error: errorText(error, t) })),
       )
-  }, [])
+  }, [t])
 
   React.useEffect(() => {
     if (!open) return undefined
@@ -760,7 +774,8 @@ function UsagePanel(props) {
           ? React.createElement('div', { className: 'um-muted' }, t('panel.loading'))
           : null,
         state.phase === 'failed'
-          ? React.createElement('div', { className: 'um-error' }, t('panel.failed') + '：' + state.error)
+          ? React.createElement('div', { className: cards.length === 0 ? 'um-error' : 'um-warn' },
+            t(cards.length === 0 ? 'panel.failed' : 'panel.stale').replace('{reason}', state.error))
           : null,
         state.phase !== 'failed' && state.phase !== 'loading' && configured.length === 0
           ? React.createElement('div', { className: 'um-muted' }, t('panel.none'))
@@ -789,7 +804,9 @@ const ZH_DICT = {
   'panel.close': '关闭',
   'panel.resize': '拖动可调整大小',
   'panel.loading': '正在读取…',
-  'panel.failed': '读取失败',
+  'panel.failed': '读取失败：{reason}',
+  'panel.stale': '刷新失败，显示上次数据：{reason}',
+  'panel.networkError': '请求未能完成（网络中断或本地服务未就绪）',
   'panel.none': '没有已配置的服务商凭据。',
   'card.notConfigured': '未配置凭据，已跳过。',
   'card.noData': '无数据。',
@@ -827,7 +844,9 @@ const EN_DICT = {
   'panel.close': 'Close',
   'panel.resize': 'Drag to resize',
   'panel.loading': 'Loading…',
-  'panel.failed': 'Request failed',
+  'panel.failed': 'Request failed: {reason}',
+  'panel.stale': 'Refresh failed; showing the last values: {reason}',
+  'panel.networkError': 'The request did not finish (offline, or the local service is not ready)',
   'panel.none': 'No configured provider credentials.',
   'card.notConfigured': 'No credential configured; skipped.',
   'card.noData': 'No data.',

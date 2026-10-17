@@ -951,3 +951,70 @@ test('the peak row belongs to the DeepSeek card alone', async () => {
   assert.doesNotMatch(text, /高峰时段/)
   assert.doesNotMatch(text, /低谷时段/)
 })
+
+test('a failed load shows the reason the host reported, not a bare status', async () => {
+  const harness = mountPlugin(createStorage(), createSidebarDom(), {
+    fetch: () => Promise.resolve({
+      ok: false,
+      status: 500,
+      json: () => Promise.resolve({ error: '请求超时（15000 ms）' }),
+    }),
+  })
+  harness.installDom()
+  harness.settle()
+  harness.openPanel()
+  await flush()
+
+  const text = panelText(harness)
+  assert.match(text, /读取失败：请求超时（15000 ms）/)
+  assert.doesNotMatch(text, /HTTP 500/, 'the status is not surfaced when the host explained itself')
+})
+
+test('a refresh failure keeps the last snapshot and labels it stale', async () => {
+  let online = true
+  const harness = mountPlugin(createStorage(), createSidebarDom(), {
+    fetch: () => (online
+      ? Promise.resolve({
+        ok: true,
+        json: () => Promise.resolve({
+          generatedAt: 1_700_000_000_000,
+          cards: [{
+            id: 'deepseek-official',
+            displayName: 'DeepSeek 官方',
+            source: 'account',
+            configured: true,
+            data: { kind: 'balance', label: 'balance.recharge', wallets: [{ currency: 'CNY', total: '12.34' }] },
+          }],
+        }),
+      })
+      : Promise.resolve({ ok: false, status: 503, json: () => Promise.resolve({ error: 'HTTP 503' }) })),
+  })
+  harness.installDom()
+  harness.settle()
+  harness.openPanel()
+  await flush()
+  assert.match(panelText(harness), /12\.34/)
+
+  online = false
+  harness.timers.find((timer) => timer.ms === 60_000).callback()
+  await flush()
+
+  const text = panelText(harness)
+  assert.match(text, /12\.34/, 'the last good numbers stay on screen')
+  assert.match(text, /刷新失败，显示上次数据：HTTP 503/)
+  assert.doesNotMatch(text, /读取失败/)
+})
+
+test('an unreachable host is reported in the panel language', async () => {
+  const harness = mountPlugin(createStorage(), createSidebarDom(), {
+    fetch: () => Promise.reject(new TypeError('Failed to fetch')),
+  })
+  harness.installDom()
+  harness.settle()
+  harness.openPanel()
+  await flush()
+
+  const text = panelText(harness)
+  assert.match(text, /请求未能完成/)
+  assert.doesNotMatch(text, /Failed to fetch/)
+})
