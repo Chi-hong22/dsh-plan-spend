@@ -210,9 +210,20 @@ function mountPlugin(storage, dom = createSidebarDom(), options = {}) {
   // A locale stub that actually resolves: `bind` reads whichever dictionary the
   // plugin registered for the active language, so tests can assert real copy.
   const dictionaries = new Map()
+  const registrations = []
+  const disposers = []
   const activeLanguage = options.language || 'zh'
   const locale = {
-    register: (ns, language, dictionary) => { dictionaries.set(language, dictionary) },
+    register: (ns, languageOrDictionaries, dictionary) => {
+      const pairs = typeof languageOrDictionaries === 'string'
+        ? [[languageOrDictionaries, dictionary]]
+        : Object.entries(languageOrDictionaries)
+      registrations.push({ ns, languages: pairs.map(([language]) => language) })
+      for (const [language, entries] of pairs) dictionaries.set(language, entries)
+      // The real register returns an idempotent disposer; mirror that so the
+      // cleanup path is observable in tests.
+      return () => { for (const [language] of pairs) dictionaries.delete(language) }
+    },
     bind: () => (key) => {
       const dictionary = dictionaries.get(activeLanguage)
       return dictionary && dictionary[key] !== undefined ? dictionary[key] : key
@@ -224,7 +235,7 @@ function mountPlugin(storage, dom = createSidebarDom(), options = {}) {
   const services = { slots, locale }
   plugin.apply({
     get: (name) => services[name] || null,
-    effect: (fn) => { fn(); return () => {} },
+    effect: (fn) => { disposers.push(fn()); return () => {} },
   })
 
   assert.deepEqual(registered['sidebar.footer.action'].definition, {
@@ -273,6 +284,8 @@ function mountPlugin(storage, dom = createSidebarDom(), options = {}) {
     plugin,
     doc,
     dom,
+    registrations,
+    disposers,
     get timers() { return Array.from(timers.values()) },
     /** Commits both components' effects, alternating while they keep re-queueing. */
     settle() {
@@ -355,6 +368,18 @@ test('registers a trigger in the sidebar footer and a panel in the overlay', () 
   assert.equal(harness.trigger.tree.props['aria-expanded'], false)
   assert.equal(harness.trigger.tree.props['aria-controls'], undefined, 'no dangling IDREF while closed')
   assert.match(harness.trigger.tree.props.className, /um-button/)
+})
+
+test('registers both dictionaries once under a stable namespace and disposes them', () => {
+  const harness = mountPlugin(createStorage())
+  assert.equal(harness.registrations.length, 1, 'registration is one call, not one per language')
+  assert.equal(harness.registrations[0].ns, 'dsh-plan-spend', 'the namespace is stable across reloads')
+  assert.deepEqual([...harness.registrations[0].languages].sort(), ['en', 'zh'])
+  assert.equal(harness.trigger.tree.props['aria-label'], '查看套餐用量')
+
+  for (const dispose of harness.disposers) if (typeof dispose === 'function') dispose()
+  harness.trigger.setProps({})
+  assert.equal(harness.trigger.tree.props['aria-label'], 'button.title', 'disposal drops the dictionaries')
 })
 
 test('the plugin declares the services it reads, so Cordis waits for them', () => {
