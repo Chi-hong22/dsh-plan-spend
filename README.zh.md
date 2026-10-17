@@ -1,6 +1,6 @@
 # @chi-hong22/dsh-plan-spend
 
-DSH 用量弹窗插件：在 Web GUI 的全局浮层里放一个「用量」按钮，点开显示**已配置服务商**的套餐花销。
+DSH 用量弹窗插件：侧边栏导航「用量」行点开一个浮窗，显示**已配置服务商**的套餐花销。
 
 ## 展示内容
 
@@ -93,29 +93,25 @@ API key 读失败或未配置时，卡上还会显示生效凭据的**来源层*
 
 插件注册两条座位：
 
-- **`sidebar.footer.action`**（id `dsh-plan-spend`）：触发按钮。该座位是侧边栏自己的操作行，会向下发
-  `{ wide }`，所以按钮随侧边栏收起/展开自动联动（`wide === false` 时只留圆点图标）。
+- **`sidebar.panellist`**（id `dsh-plan-spend`，order 20）：导航行。该座位是侧边栏自己的导航列表，
+  行按钮、图标盒、标题、选中态、轨道态全由 shell 画；本入口只渲染官方图标集 **16px** 的仪表字形
+  （`{ size, active }`），不额外加任何像素。点击该行本来会让 shell 把 `dsh-plan-spend` 当成主面板去
+  选中——而它并不存在，会抛错——所以字形在行元素上先截住这次点击（早于 React 的委托处理器），
+  改为开关面板。
 - **`shell.overlay`**（id `dsh-plan-spend`）：面板。全局浮层位于每一列之外，面板因此能落在侧边栏
   **外侧**，而不会被侧边栏的 `overflow: hidden` 裁掉。
 
-**面板定位**：面板测量按钮所在的**框架级列**（结构性上溯到 frame 的直接子元素，不依赖哈希类名），
-左边缘锚在该列右缘 + 10px，顶边锚在该列顶端 + 10px（也就是工作区顶部），再向下生长；侧边栏宽度变化时重新测量。
+**面板定位**：面板测量导航行所在的**框架级列**（结构性上溯到 frame 的直接子元素，不依赖哈希类名），
+左边缘锚在该列右缘 + 10px；顶边跟着**对话正文**而不是工作区：侧栏旁第一个
+`[data-conversation-content]` 就是紧贴会话标题与「对话/轨迹」标签行下方的滚动区，面板锚在它顶端
++ 10px，因此不会压住标题和标签行。若当前没有会话正文，退回该列顶端。侧边栏宽度或布局变化时重新测量。
 
-> 一处偏差需要你知道：`sidebar.settings`（账户行）是 **single** 座位，已被 shell 的账户/设置 UI
-> 占用，占它等于遮蔽官方 UI（`replaceRisk: shadows-shipped-ui`）。而 `.footArea` 是 column，`footerActions`
-> 在 `settingsArea` 之上——所以按钮落在账户行的**上一行**，不是同一行账户的右侧。
-
-**按钮样式**：度量取自侧边栏自身的导航行（`.panelRow`）——行外边距 `0 2px`、`padding: 7px 8px`、
-`min-height: 36px`、`border-radius: var(--dsw-radius-md)`、`gap: 8px`、`font-size: 14px/22px`，
-hover 用 `--dsw-alias-interactive-bg-hover`；图标用官方图标集 **16px** 的仪表字形，所以本行读起来
-就是多出来的一行导航，而不是第二行账户。轨道态为 `36×36` 居中盒，同一字形放大到 **18px**。
-
-**关闭方式**：再次点击按钮、点面板里的 `×`、按 `Esc`、或点击面板外任意位置，都会关闭。
+**关闭方式**：再次点击该导航行、点面板里的 `×`、按 `Esc`、或点击面板外任意位置，都会关闭。
 
 **缩放**：手柄在面板**右下角**（离顶部锚点最远的那个角），向右拖增宽、向下拖增高；尺寸存
 `localStorage: dsh-plan-spend.size`，并受面板最小尺寸与浮层边界双重约束。
 
-**键盘**：打开后焦点进入面板，`Esc` 关闭并把焦点还给按钮；`Tab` 可到达手柄，方向键按 16px
+**键盘**：打开后焦点进入面板，`Esc` 关闭并把焦点还给该导航行；`Tab` 可到达手柄，方向键按 16px
 步进缩放，按住 `Shift` 步进放大四倍。
 
 想恢复默认尺寸，清掉 `dsh-plan-spend.size`。改完源码运行 `npm run build` 重新生成 `client.js`；
@@ -151,7 +147,7 @@ locale/               插件管理器读取的显示名称与描述（en、zh）
 scripts/build-client.mjs
 scripts/render-client.mjs   构建与漂移测试共用的模板
 scripts/probe-sources.ps1   一次性探针：不开插件直接验证两个上游接口
-tests/client-ui.test.mjs    触发器/定位/缩放/峰谷 + 账号路由卡片测试（npm test）
+tests/client-ui.test.mjs    导航行/定位/缩放/峰谷 + 账号路由卡片测试（npm test）
 tests/host-snapshot.test.mjs Host 路由载荷测试（npm test）
 tests/build-drift.test.mjs  client.js 必须与 client.body.js 一致（npm test）
 tests/plugin-meta.test.mjs  双语显示元数据（npm test）

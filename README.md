@@ -1,7 +1,7 @@
 # @chi-hong22/dsh-plan-spend
 
-A usage popup for the DSH Web GUI: one "Usage" chip in the frame-wide overlay
-opens a panel showing the plan spend of the **configured** providers.
+A usage popup for the DSH Web GUI: the "Usage" sidebar navigation row opens a
+panel showing the plan spend of the **configured** providers.
 
 ## What it shows
 
@@ -119,33 +119,29 @@ Adding a provider = one row in `ADAPTERS` plus one reader function.
 
 The plugin registers two seats:
 
-- **`sidebar.footer.action`** (id `dsh-plan-spend`): the trigger. That seat is
-  the sidebar's own action row and hands each entry `{ wide }`, so the button
-  follows the collapse/expand rail by itself (icon-only when `wide === false`).
+- **`sidebar.panellist`** (id `dsh-plan-spend`, order 20): the row. That seat is
+  the sidebar's own navigation list, so the shell draws the button, its glyph
+  box, its label, its active state and its collapsed rail; the entry only renders
+  the shipped **16px** gauge glyph (`{ size, active }`) and adds no pixels of its
+  own. Clicking the row would normally make the shell select `dsh-plan-spend` as
+  a main panel and throw, because none is registered, so the glyph stops the
+  click on the row element before React's delegated handler sees it and toggles
+  the panel instead.
 - **`shell.overlay`** (id `dsh-plan-spend`): the panel. The frame-wide layer sits
   outside every column, so the panel renders *beside* the sidebar instead of
   being clipped by the sidebar's `overflow: hidden`.
 
-**Placement**: the panel measures the frame-level column that holds the button
-(by climbing the DOM to the frame's direct child, never by hashed class name),
-anchors its left edge 10px past that column's right edge and its top 10px below
-the column's own top — the top of the workspace — then grows downward. A sidebar
-width change re-measures.
+**Placement**: the panel measures the frame-level column that holds the row (by
+climbing the DOM to the frame's direct child, never by hashed class name) and
+anchors its left edge 10px past that column's right edge. Its top edge follows
+the conversation body instead of the workspace: the first
+`[data-conversation-content]` beside the sidebar is the scroll area that sits
+directly below the conversation header and its dialog/trajectory tabs, so the
+panel starts 10px below *that* top and never covers the header or the tabs. With
+no conversation on screen it falls back to the column's own top. A sidebar width
+change or a layout change re-measures.
 
-> One deviation worth knowing: `sidebar.settings` (the account row) is a
-> **single** seat already owned by the shipped account/settings UI, so taking it
-> would shadow that UI (`replaceRisk: shadows-shipped-ui`). `.footArea` is a
-> column with `footerActions` above `settingsArea`, so the button lands in the
-> row **above** the account row rather than at its right in the same row.
-
-**Button styling** mirrors the sidebar's own navigation rows — row margin
-`0 2px`, `padding: 7px 8px`, `min-height: 36px`, `border-radius:`
-`var(--dsw-radius-md)`, `gap: 8px`, `font-size: 14px/22px`, hover
-`--dsw-alias-interactive-bg-hover`; the glyph is the shipped **16px** gauge icon,
-so the row reads as one more navigation row rather than a second account row. In
-the rail it becomes a centred `36×36` box with the same glyph at **18px**.
-
-**Dismissal**: the trigger again, the panel's `×`, `Esc`, or a press anywhere
+**Dismissal**: the row again, the panel's `×`, `Esc`, or a press anywhere
 outside the panel all close it.
 
 **Resizing**: the grip sits in the panel's **bottom-right** corner — the one
@@ -154,7 +150,7 @@ grows the height. The size is stored under `dsh-plan-spend.size` and is bounded 
 panel minimum and the overlay bounds.
 
 **Keyboard**: opening moves focus into the panel, and `Esc` closes it and hands
-focus back to the trigger. `Tab` reaches the grip; the arrow keys resize in 16px
+focus back to the row. `Tab` reaches the grip; the arrow keys resize in 16px
 steps, and holding `Shift` makes each step four times larger.
 
 To return to the default size, clear `dsh-plan-spend.size`. After editing the
@@ -198,7 +194,7 @@ locale/              display name/description the plugin manager reads (en, zh)
 scripts/build-client.mjs
 scripts/render-client.mjs   template shared by the build and the drift test
 scripts/probe-sources.ps1   one-shot probe: verify both upstreams without the plugin
-tests/client-ui.test.mjs    trigger/placement/resize/peak + card tests (npm test)
+tests/client-ui.test.mjs    row/placement/resize/peak + card tests (npm test)
 tests/host-snapshot.test.mjs  host route payload tests (npm test)
 tests/build-drift.test.mjs  client.js must match client.body.js (npm test)
 tests/plugin-meta.test.mjs  localized display metadata (npm test)
