@@ -615,11 +615,14 @@ function UsageTrigger(props) {
       'aria-hidden': 'true',
       fill: 'none',
       stroke: 'currentColor',
-      strokeWidth: 1,
+      strokeWidth: 1.15,
       strokeLinecap: 'round',
     },
-      React.createElement('path', { d: 'M3.6 15a7.2 7.2 0 1 1 12.8 0' }),
-      React.createElement('path', { d: 'M10 11.6l3.4-3.4' })),
+      // Gauge dial: a symmetric 240° arc around (10, 11.85) plus a 55° needle. The proportions
+      // follow Lucide's 24px gauge; 1.15 stroke lands on 1.84px at the 32px button so the ring
+      // stays crisp instead of graying out.
+      React.createElement('path', { d: 'M3.59 15.55A7.4 7.4 0 1 1 16.41 15.55' }),
+      React.createElement('path', { d: 'M10 11.85 12.87 7.75' })),
     compact ? null : React.createElement('span', { className: 'um-button-label', style: labelStyle }, t('button.label')))
 }
 
