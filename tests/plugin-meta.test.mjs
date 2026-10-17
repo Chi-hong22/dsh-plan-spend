@@ -31,9 +31,12 @@ test('the plugin manager can read a localized name and description for both lang
   }
   assert.equal(titles.size, LANGUAGES.length, 'each language names the plugin in its own words')
   assert.equal(descriptions.size, LANGUAGES.length, 'each language describes the plugin in its own words')
-  // English deliberately shows the package's own name, so a future rename has to
-  // touch this file as well instead of silently drifting from package.json.
-  assert.equal(metaOf('en').title, pkg.name.split('/').pop(), 'the English name is the package name')
+
+  // The list shows the title verbatim, in the current UI language, so both titles
+  // carry the full package name: English is the name alone, Chinese keeps the
+  // readable label in front of it (the format every other plugin row uses).
+  assert.equal(metaOf('en').title, pkg.name, 'the English name is the full package name')
+  assert.ok(metaOf('zh').title.endsWith(` · ${pkg.name}`), 'the Chinese title ends with the package name')
 })
 
 test('the published file list carries the locale folder', () => {
