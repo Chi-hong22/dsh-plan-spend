@@ -1,5 +1,5 @@
 /**
- * Behaviour tests for the client half: the sidebar trigger and the panel.
+ * Behaviour tests for the client half: the navigation row and the meter page.
  *
  * The client body is loaded exactly as the browser bundle loads it — the bare
  * function body from `client.body.js`, invoked with React and `styles` — and
@@ -7,23 +7,27 @@
  * registrations, and each registered component is rendered with its own hook
  * store.
  *
+ * The two seats share one id. The sidebar row is what the shell renders for
+ * `sidebar.panellist`; the page is the `main` entry that row selects, so the
+ * meter replaces the conversation instead of floating above it. The row is
+ * handed only the glyph size and its active flag, the page gets `t` from its
+ * declared locale, and both are exercised with exactly those props.
+ *
  * The hook stores are dispatched the way React does it: the body closes over a
  * single React binding, so each hook call resolves against whichever component
- * a render set as current. Effects are queued and run after the fake DOM has
- * been installed, mirroring React's commit-then-effect order; that is what lets
- * the placement measurement feed the panel geometry.
+ * a render set as current. Effects are queued and run once the component has
+ * rendered, mirroring React's commit-then-effect order — that is what starts
+ * the snapshot load and the refresh timers when the page mounts.
  *
- * Covered: both slot contracts, the open/close path, the placement rule that
- * keeps the panel outside the sidebar column, the rail (compact) trigger, and
- * the resize grip's corner, sign, bounds and persistence. Layout, paint and CSS
- * are not observable here.
+ * Covered: both slot contracts, the row's glyph, the page's initial load,
+ * manual refresh, timers, the loading state and the rendered card content.
+ * Layout, paint and CSS are not observable here.
  */
 import { readFileSync } from 'node:fs'
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 
 const BODY = readFileSync(new URL('../client.body.js', import.meta.url), 'utf8')
-const FRAME = { left: 0, top: 0, right: 1200, bottom: 800, width: 1200, height: 800 }
 
 /** The single React binding the body closes over, dispatching to the current component. */
 function createReactDispatcher() {
@@ -101,15 +105,6 @@ function createStorage(initial = {}) {
   }
 }
 
-function fakeBox({ left = 0, top = 0, right = 0, bottom = 0 } = {}) {
-  const box = {
-    parentElement: null,
-    getBoundingClientRect: () => ({ left, top, right, bottom, width: right - left, height: bottom - top }),
-    contains: (node) => node === box,
-  }
-  return box
-}
-
 /** A document stand-in that records listeners so tests can dispatch and audit them. */
 function createDocumentStub() {
   const listeners = new Map()
@@ -133,33 +128,8 @@ function createDocumentStub() {
   }
 }
 
-/**
- * The sidebar chain the placement walk climbs: button → actions → foot area →
- * sidebar column → frame, plus the overlay layer whose parent is the frame.
- */
-function createSidebarDom({ columnRight = 280, buttonBottom = 744 } = {}) {
-  const frame = fakeBox(FRAME)
-  const column = fakeBox({ left: 0, top: 0, right: columnRight, bottom: buttonBottom })
-  column.parentElement = frame
-  const footArea = fakeBox()
-  footArea.parentElement = column
-  const actions = fakeBox({ left: 0, top: 0, right: columnRight, bottom: buttonBottom })
-  actions.parentElement = footArea
-  const button = fakeBox({ left: 0, top: buttonBottom - 44, right: 118, bottom: buttonBottom })
-  button.parentElement = actions
-  footArea.children = [actions]
-
-  const layer = fakeBox(FRAME)
-  layer.parentElement = frame
-  const panelNode = { isPanel: true }
-  return {
-    frame, column, footArea, actions,
-    button, layer, panelNode, columnRight, buttonBottom,
-  }
-}
-
-/** Loads the plugin body and drives both registered components. */
-function mountPlugin(storage, dom = createSidebarDom(), options = {}) {
+/** Loads the plugin body and drives the row plus the page it selects. */
+function mountPlugin(storage, options = {}) {
   const react = createReactDispatcher()
   // Timers and fetch are handed to the body, not taken from the globals: a real
   // setInterval would keep the test process alive after the run.
@@ -176,9 +146,11 @@ function mountPlugin(storage, dom = createSidebarDom(), options = {}) {
   const plugin = factory(react.api, { insert: () => {} }, storage, setIntervalStub, clearIntervalStub, fetchStub, doc)
 
   const registered = {}
+  const injected = []
   const slots = {
     inject(key, callback) {
-      assert.ok(key === 'sidebar.footer.action' || key === 'shell.overlay', `unexpected slot ${key}`)
+      assert.ok(key === 'sidebar.panellist' || key === 'main', `unexpected slot ${key}`)
+      injected.push(key)
       callback()
     },
     register(definition, component) {
@@ -208,20 +180,24 @@ function mountPlugin(storage, dom = createSidebarDom(), options = {}) {
     },
     getSnapshot: () => ({ active: activeLanguage, revision: 1 }),
   }
-  // The account namespace is optional in a composition, so it is offered the way
-  // the runtime offers it: as `remote.account`, or under its own dotted key.
   const services = { slots, locale }
   plugin.apply({
     get: (name) => services[name] || null,
     effect: (fn) => { disposers.push(fn()); return () => {} },
   })
 
-  assert.deepEqual(registered['sidebar.footer.action'].definition, {
-    name: 'sidebar.footer.action', id: 'dsh-plan-spend', order: 20,
+  // A navigation row selects a `main` entry by the key it names, so both seats
+  // must be registered under one id; the row's order is what places it in the
+  // panel list, between the schedule row (10) and the memory row (30).
+  assert.deepEqual(registered.main.definition, {
+    name: 'main', key: 'dsh-plan-spend', locale: 'dsh-plan-spend',
   })
-  assert.deepEqual(registered['shell.overlay'].definition, {
-    name: 'shell.overlay', id: 'dsh-plan-spend', order: 30,
-  })
+  const rowDefinition = registered['sidebar.panellist'].definition
+  assert.equal(rowDefinition.name, 'sidebar.panellist')
+  assert.equal(rowDefinition.id, 'dsh-plan-spend')
+  assert.equal(rowDefinition.order, 20)
+  assert.equal(rowDefinition.locale, 'dsh-plan-spend')
+  assert.equal(typeof rowDefinition.label, 'function', 'the label is resolved per render')
 
   function createInstance(name, initialProps) {
     let props = initialProps
@@ -241,8 +217,10 @@ function mountPlugin(storage, dom = createSidebarDom(), options = {}) {
     }
   }
 
-  const trigger = createInstance('sidebar.footer.action', { wide: true })
-  const panel = createInstance('shell.overlay', {})
+  // The renderer resolves the page's `t` from the declared locale; the row is
+  // handed the glyph size and whether its panel is the active one.
+  const page = createInstance('main', { t: locale.bind('dsh-plan-spend') })
+  const navRow = createInstance('sidebar.panellist', { size: 16, active: false })
 
   const settleOne = (instance) => {
     for (let guard = 0; guard < 20; guard++) {
@@ -256,354 +234,116 @@ function mountPlugin(storage, dom = createSidebarDom(), options = {}) {
     }
   }
 
-  const harness = {
-    trigger,
-    panel,
+  return {
+    page,
+    row: navRow,
     plugin,
     doc,
-    dom,
+    injected,
     registrations,
     disposers,
+    label: () => rowDefinition.label(),
     get timers() { return Array.from(timers.values()) },
     /** Commits both components' effects, alternating while they keep re-queueing. */
     settle() {
       for (let guard = 0; guard < 20; guard++) {
-        if (!trigger.state.hasPending() && !panel.state.hasPending()) break
-        settleOne(trigger)
-        settleOne(panel)
+        if (!page.state.hasPending() && !navRow.state.hasPending()) break
+        settleOne(page)
+        settleOne(navRow)
       }
     },
-    /**
-     * Commits the fake sidebar DOM: the trigger's button, the overlay layer the
-     * anchor measures against, and the panel box the dismiss test inspects.
-     */
-    installDom() {
-      dom.button.focus = () => { dom.focused = 'button' }
-      trigger.tree.props.ref.current = dom.button
-      const anchor = panel.tree
-      if (!anchor) return
-      anchor.props.ref.current = { offsetParent: dom.layer }
-      anchor.props.children.props.ref.current = {
-        getBoundingClientRect: () => ({ left: 0, top: 0, right: 0, bottom: 0, width: 0, height: 0 }),
-        contains: (node) => node === dom.panelNode,
-        focus: () => { dom.focused = 'panel' },
-      }
-    },
-    openPanel() {
-      trigger.tree.props.onClick()
-      harness.installDom()
-      harness.settle()
-    },
-  }
-  return harness
-}
-
-function anchorOf(harness) {
-  const anchor = harness.panel.tree
-  assert.ok(anchor, 'the panel is closed')
-  return anchor
-}
-
-function panelOf(harness) {
-  return anchorOf(harness).props.children
-}
-
-function handleOf(harness) {
-  const children = panelOf(harness).props.children
-  const handle = children[children.length - 1]
-  assert.match(handle.props.className, /um-resize/)
-  return handle
-}
-
-function installPanelBox(harness, size) {
-  panelOf(harness).props.ref.current = {
-    getBoundingClientRect: () => ({ left: 0, top: 0, width: size.width, height: size.height, right: size.width, bottom: size.height }),
-    contains: (node) => node === harness.dom.panelNode,
   }
 }
 
-function pointerEvent(x, y, pointerId = 1) {
-  return {
-    button: 0,
-    pointerId,
-    clientX: x,
-    clientY: y,
-    preventDefault: () => {},
-    currentTarget: { setPointerCapture: () => {}, releasePointerCapture: () => {} },
-  }
+/** The page's rendered host tree. */
+function pageOf(harness) {
+  assert.ok(harness.page.tree, 'the page did not render')
+  return harness.page.tree
 }
 
-function dragGrip(harness, from, to) {
-  const handle = handleOf(harness)
-  handle.props.onPointerDown(pointerEvent(from.x, from.y))
-  handle.props.onPointerMove(pointerEvent(to.x, to.y))
-  handle.props.onPointerUp(pointerEvent(to.x, to.y))
+/** The page header's refresh button. */
+function refreshOf(harness) {
+  return pageOf(harness).props.children[0].props.children[1].props.children
 }
 
-test('registers a trigger in the sidebar footer and a panel in the overlay', () => {
+test('registers one id as a navigation row and the page it selects', () => {
   const harness = mountPlugin(createStorage())
-  assert.equal(harness.panel.tree, null, 'the panel starts closed')
-  assert.equal(harness.trigger.tree.props['aria-expanded'], false)
-  assert.equal(harness.trigger.tree.props['aria-controls'], undefined, 'no dangling IDREF while closed')
-  assert.match(harness.trigger.tree.props.className, /um-button/)
+
+  // The mount asserts both definitions; what is left to check is that the plugin
+  // claims exactly these two seats and registers its dictionary once.
+  assert.deepEqual(harness.injected.slice().sort(), ['main', 'sidebar.panellist'])
+  assert.equal(harness.registrations.length, 1, 'one dictionary registration')
+  assert.deepEqual(harness.registrations[0].languages, ['zh', 'en'])
+  assert.equal(harness.label(), '用量')
+  assert.equal(harness.doc.count(), 0, 'the page installs no document listeners')
 })
 
-test('registers both dictionaries once under a stable namespace and disposes them', () => {
+test('the row renders only the gauge glyph, sized by the sidebar', () => {
+  // The shell's PanelRow draws the label and hands the glyph just a size, so the
+  // icon must carry the rail's own 16px (18px when narrow) geometry.
   const harness = mountPlugin(createStorage())
-  assert.equal(harness.registrations.length, 1, 'registration is one call, not one per language')
-  assert.equal(harness.registrations[0].ns, 'dsh-plan-spend', 'the namespace is stable across reloads')
-  assert.deepEqual([...harness.registrations[0].languages].sort(), ['en', 'zh'])
-  assert.equal(harness.trigger.tree.props['aria-label'], '查看套餐用量')
+  const glyph = harness.row.tree
 
-  for (const dispose of harness.disposers) if (typeof dispose === 'function') dispose()
-  harness.trigger.setProps({})
-  assert.equal(harness.trigger.tree.props['aria-label'], 'button.title', 'disposal drops the dictionaries')
+  assert.equal(glyph.type, 'svg')
+  assert.equal(glyph.props.className, 'um-nav-icon')
+  assert.equal(glyph.props.viewBox, '0 0 16 16')
+  assert.equal(glyph.props.width, 16)
+  assert.equal(glyph.props.height, 16)
+  assert.equal(glyph.props.strokeWidth, 1)
+  assert.equal(glyph.props.fill, 'none')
+  assert.equal(glyph.props.stroke, 'currentColor')
+  assert.equal(glyph.props.children.length, 3, 'dial, needle and hub')
+
+  harness.row.setProps({ size: 18, active: true })
+  assert.equal(harness.row.tree.props.width, 18)
 })
 
-test('the plugin declares the services it reads, so Cordis waits for them', () => {
-  // Without this the locale service can be missing at apply time, which turns
-  // every t() lookup into the raw key.
-  const harness = mountPlugin(createStorage())
-  assert.equal(harness.plugin.name, 'dsh-plan-spend')
-  assert.deepEqual(harness.plugin.inject, ['slots', 'locale'])
-})
-
-test('the trigger follows the rail: icon-only when the sidebar is narrow', () => {
-  const harness = mountPlugin(createStorage())
-  assert.ok(!/um-button-compact/.test(harness.trigger.tree.props.className))
-
-  harness.trigger.setProps({ wide: false })
-  assert.match(harness.trigger.tree.props.className, /um-button-compact/)
-})
-
-test('opening places the panel just outside the sidebar column', () => {
-  const harness = mountPlugin(createStorage(), createSidebarDom({ columnRight: 280, buttonBottom: 744 }))
-  harness.installDom()
-  harness.settle()
-  harness.openPanel()
-
-  const style = anchorOf(harness).props.style
-  // left = column right (280) + gap (10); top = column top - layer top + gap (10).
-  assert.equal(style.left, '290px')
-  assert.equal(style.top, '10px')
-  // maxWidth = 1200 - 290 - 8.
-  assert.equal(style.maxWidth, '902px')
-  assert.equal(panelOf(harness).props.children[0].props.children.length, 4, 'header keeps title, stamp and two buttons')
-})
-
-test('the panel re-places when the sidebar changes width while open', () => {
-  const dom = createSidebarDom({ columnRight: 280, buttonBottom: 744 })
-  const harness = mountPlugin(createStorage(), dom)
-  harness.installDom()
-  harness.settle()
-  harness.openPanel()
-  assert.equal(anchorOf(harness).props.style.left, '290px')
-
-  // The rail collapses the column to 56px; only the button element moves.
-  dom.column.getBoundingClientRect = () => ({ left: 0, top: 0, right: 56, bottom: 744, width: 56, height: 744 })
-  harness.trigger.setProps({ wide: false })
-  harness.settle()
-
-  assert.equal(anchorOf(harness).props.style.left, '66px')
-})
-
-test('closing from the header hides the panel', () => {
-  const harness = mountPlugin(createStorage())
-  harness.installDom()
-  harness.settle()
-  harness.openPanel()
-  assert.ok(harness.panel.tree, 'the panel is open')
-
-  const header = panelOf(harness).props.children[0]
-  header.props.children[3].props.onClick()
-  harness.settle()
-
-  assert.equal(harness.panel.tree, null)
-  assert.equal(harness.trigger.tree.props['aria-expanded'], false)
-})
-
-test('dragging the bottom-right grip grows the panel and stores it', () => {
-  const storage = createStorage()
-  const harness = mountPlugin(storage)
-  harness.installDom()
-  harness.settle()
-  harness.openPanel()
-  installPanelBox(harness, { width: 330, height: 360 })
-
-  // The grip is bottom-right, so outward is right and down.
-  dragGrip(harness, { x: 100, y: 100 }, { x: 150, y: 140 })
-
-  assert.equal(storage.raw.get('dsh-plan-spend.size'), JSON.stringify({ width: 380, height: 400 }))
-  const style = panelOf(harness).props.style
-  assert.deepEqual({ width: style.width, height: style.height }, { width: '380px', height: '400px' })
-})
-
-test('the grip respects the minimum size and the placement bounds', () => {
-  const storage = createStorage()
-  const harness = mountPlugin(storage)
-  harness.installDom()
-  harness.settle()
-  harness.openPanel()
-
-  installPanelBox(harness, { width: 330, height: 360 })
-  dragGrip(harness, { x: 0, y: 0 }, { x: -500, y: 500 })
-  assert.equal(storage.raw.get('dsh-plan-spend.size'), JSON.stringify({ width: 260, height: 782 }))
-
-  installPanelBox(harness, { width: 330, height: 360 })
-  dragGrip(harness, { x: 0, y: 0 }, { x: 5000, y: -5000 })
-  assert.equal(storage.raw.get('dsh-plan-spend.size'), JSON.stringify({ width: 902, height: 160 }))
-})
-
-test('a grip drag below the threshold stores nothing', () => {
-  const storage = createStorage()
-  const harness = mountPlugin(storage)
-  harness.installDom()
-  harness.settle()
-  harness.openPanel()
-  installPanelBox(harness, { width: 330, height: 360 })
-
-  dragGrip(harness, { x: 100, y: 100 }, { x: 101, y: 99 })
-  assert.equal(storage.raw.has('dsh-plan-spend.size'), false)
-})
-
-test('a stored size is applied on open', () => {
-  const storage = createStorage({ 'dsh-plan-spend.size': JSON.stringify({ width: 420, height: 300 }) })
-  const harness = mountPlugin(storage)
-  harness.installDom()
-  harness.settle()
-  harness.openPanel()
-
-  const style = panelOf(harness).props.style
-  assert.deepEqual({ width: style.width, height: style.height }, { width: '420px', height: '300px' })
-})
-
-test('a size stored before the rename is adopted under the new key and dropped', () => {
-  const storage = createStorage({ 'usage-meter.size': JSON.stringify({ width: 410, height: 290 }) })
-  const harness = mountPlugin(storage)
-  harness.installDom()
-  harness.settle()
-  harness.openPanel()
-
-  const style = panelOf(harness).props.style
-  assert.deepEqual({ width: style.width, height: style.height }, { width: '410px', height: '290px' })
-  assert.equal(storage.raw.get('dsh-plan-spend.size'), JSON.stringify({ width: 410, height: 290 }))
-  assert.equal(storage.raw.has('usage-meter.size'), false)
-})
-
-test('an unreadable current size resets the panel instead of resurrecting the old key', () => {
-  const storage = createStorage({
-    'dsh-plan-spend.size': '{not json',
-    'usage-meter.size': JSON.stringify({ width: 410, height: 290 }),
+test('mounting the page loads a snapshot and schedules the refresh clocks', () => {
+  const calls = []
+  const harness = mountPlugin(createStorage(), {
+    fetch: (url) => { calls.push(url); return snapshotOf([])() },
   })
-  const harness = mountPlugin(storage)
-  harness.installDom()
-  harness.settle()
-  harness.openPanel()
-
-  const style = panelOf(harness).props.style
-  assert.deepEqual({ width: style.width, height: style.height }, { width: '330px', height: '360px' })
-  assert.equal(storage.raw.has('usage-meter.size'), false, 'the old key is still cleaned up')
-  assert.equal(storage.raw.has('dsh-plan-spend.size'), true, 'the unreadable current key is left in place')
-})
-
-test('the retired manual-position key is dropped once', () => {
-  const storage = createStorage({ 'usage-meter.position': JSON.stringify({ x: 10, y: 20 }) })
-  const harness = mountPlugin(storage)
-  harness.installDom()
   harness.settle()
 
-  assert.equal(storage.raw.has('usage-meter.position'), false)
+  assert.deepEqual(calls, ['/dsh-plan-spend/snapshot'], 'the page reads once on mount')
+  const intervals = harness.timers.map((timer) => timer.ms).sort((left, right) => left - right)
+  assert.deepEqual(intervals, [30_000, 60_000], 'one snapshot refresh, one countdown tick')
+
+  harness.timers.find((timer) => timer.ms === 60_000).callback()
+  assert.equal(calls.length, 2, 'the minute tick re-reads the snapshot')
 })
 
-test('the refresh and countdown timers live only while the panel is open', () => {
+test('the page reports loading until the first snapshot arrives', () => {
+  const harness = mountPlugin(createStorage(), { fetch: () => new Promise(() => {}) })
+  harness.settle()
+
+  assert.equal(pageOf(harness).props['aria-busy'], true)
+  assert.match(pageText(harness), /正在读取/)
+})
+
+test('the header refresh asks the host to bypass its cache', () => {
+  const calls = []
+  const harness = mountPlugin(createStorage(), {
+    fetch: (url) => { calls.push(url); return snapshotOf([])() },
+  })
+  harness.settle()
+  refreshOf(harness).props.onClick()
+  harness.settle()
+
+  assert.deepEqual(calls, ['/dsh-plan-spend/snapshot', '/dsh-plan-spend/snapshot?refresh=1'])
+  assert.equal(refreshOf(harness).props['aria-label'], '刷新')
+})
+
+test('the heading and the row label come from the plugin dictionary', () => {
   const harness = mountPlugin(createStorage())
-  harness.installDom()
-  harness.settle()
-  assert.equal(harness.timers.length, 0, 'no timer runs while the panel is closed')
+  assert.match(pageText(harness), /套餐用量/)
 
-  harness.openPanel()
-  assert.deepEqual(harness.timers.map((timer) => timer.ms).sort((a, b) => a - b), [30_000, 60_000])
+  const english = mountPlugin(createStorage(), { language: 'en' })
+  assert.match(pageText(english), /Plan usage/)
+  assert.equal(english.label(), 'Usage')
 
-  const header = panelOf(harness).props.children[0]
-  header.props.children[3].props.onClick()
-  harness.settle()
-  assert.equal(harness.timers.length, 0, 'closing clears both timers')
-})
-
-test('the trigger renders an icon plus a label, and drops the label in the rail', () => {
-  const harness = mountPlugin(createStorage())
-  const children = harness.trigger.tree.props.children
-  assert.equal(children[0].type, 'svg', 'the icon leads the row')
-  assert.equal(children[0].props.className, 'um-button-icon')
-  // The glyph is the sidebar's own 16px navigation glyph.
-  assert.equal(children[0].props.viewBox, '0 0 16 16')
-  assert.equal(children[0].props.width, 16)
-  assert.equal(children[0].props.height, 16)
-  assert.equal(children[1].type, 'span', 'the wide row carries a label')
-
-  harness.trigger.setProps({ wide: false })
-  assert.equal(harness.trigger.tree.props.children[1], null, 'the rail keeps the icon only')
-})
-
-test('Escape closes the panel', () => {
-  const harness = mountPlugin(createStorage())
-  harness.installDom()
-  harness.settle()
-  harness.openPanel()
-  assert.ok(harness.panel.tree, 'the panel is open')
-
-  harness.doc.dispatch('keydown', { key: 'Escape' })
-  harness.settle()
-
-  assert.equal(harness.panel.tree, null)
-  assert.equal(harness.trigger.tree.props['aria-expanded'], false)
-})
-
-test('a press outside the panel closes it; inside or on the trigger it does not', () => {
-  const harness = mountPlugin(createStorage())
-  harness.installDom()
-  harness.settle()
-  harness.openPanel()
-
-  harness.doc.dispatch('pointerdown', { target: harness.dom.panelNode })
-  harness.settle()
-  assert.ok(harness.panel.tree, 'a press inside the panel must not close it')
-
-  harness.doc.dispatch('pointerdown', { target: harness.dom.button })
-  harness.settle()
-  assert.ok(harness.panel.tree, 'a press on the trigger must not close it — its click toggles')
-
-  harness.doc.dispatch('pointerdown', { target: { isOutside: true } })
-  harness.settle()
-  assert.equal(harness.panel.tree, null, 'a press anywhere else closes it')
-})
-
-test('the dismiss listeners exist only while the panel is open', () => {
-  const harness = mountPlugin(createStorage())
-  harness.installDom()
-  harness.settle()
-  assert.equal(harness.doc.count(), 0, 'no listener while closed')
-
-  harness.openPanel()
-  assert.equal(harness.doc.count(), 2, 'keydown plus pointerdown')
-
-  const header = panelOf(harness).props.children[0]
-  header.props.children[3].props.onClick()
-  harness.settle()
-  assert.equal(harness.doc.count(), 0, 'closing removes both')
-})
-
-test('the row is styled by the sheet, not measured, and the rail keeps the icon only', () => {
-  const harness = mountPlugin(createStorage())
-  harness.installDom()
-  harness.settle()
-  assert.equal(harness.trigger.tree.props.style, undefined, 'the row follows .panelRow in CSS')
-  assert.equal(harness.trigger.tree.props.children[1].props.style, undefined)
-
-  harness.trigger.setProps({ wide: false })
-  harness.settle()
-
-  assert.equal(harness.trigger.tree.props.children[1], null)
+  for (const dispose of english.disposers) if (typeof dispose === 'function') dispose()
+  assert.equal(english.label(), 'button.label', 'without a dictionary the key shows through')
 })
 
 /** Expands every function component in an element tree, so its text is reachable. */
@@ -626,11 +366,11 @@ function collectText(node, out = []) {
   return out
 }
 
-function panelText(harness) {
-  return collectText(expandTree(panelOf(harness))).join(' ')
+function pageText(harness) {
+  return collectText(expandTree(pageOf(harness))).join(' ')
 }
 
-/** Lets the panel's single async source settle and re-render. */
+/** Lets the page's single async source settle and re-render. */
 function flush() {
   return new Promise((resolve) => setTimeout(resolve, 0))
 }
@@ -642,12 +382,10 @@ function snapshotOf(cards) {
   })
 }
 
-/** Opens the panel against a fixed snapshot. */
+/** Renders the page against a fixed snapshot. */
 function openWithSnapshot(cards) {
-  const harness = mountPlugin(createStorage(), createSidebarDom(), { fetch: snapshotOf(cards) })
-  harness.installDom()
+  const harness = mountPlugin(createStorage(), { fetch: snapshotOf(cards) })
   harness.settle()
-  harness.openPanel()
   return harness
 }
 
@@ -663,7 +401,7 @@ test('the account card renders the recharge balance and no bonus row when there 
   ])
   await flush()
 
-  const text = panelText(harness)
+  const text = pageText(harness)
   assert.match(text, /账号登录/)
   assert.match(text, /充值余额/)
   assert.match(text, /12\.34/)
@@ -687,7 +425,7 @@ test('a granted wallet renders as its own row below the recharge balance', async
   ])
   await flush()
 
-  const text = panelText(harness)
+  const text = pageText(harness)
   assert.match(text, /赠金 ¥0\.50/)
   assert.ok(text.indexOf('充值余额') < text.indexOf('赠金'), 'the bonus row follows the recharge row')
 })
@@ -708,7 +446,7 @@ test('a granted wallet of zero renders no bonus row', async () => {
   ])
   await flush()
 
-  assert.doesNotMatch(panelText(harness), /赠金/)
+  assert.doesNotMatch(pageText(harness), /赠金/)
 })
 
 test('the API-key card keeps its total and topped-up split', async () => {
@@ -727,7 +465,7 @@ test('the API-key card keeps its total and topped-up split', async () => {
   ])
   await flush()
 
-  const text = panelText(harness)
+  const text = pageText(harness)
   assert.match(text, /API Key/)
   assert.match(text, /总余额/)
   assert.match(text, /3\.17/)
@@ -748,7 +486,7 @@ test('a failing API-key read reports the credential layer and its writability', 
   ])
   await flush()
 
-  const text = panelText(harness)
+  const text = pageText(harness)
   assert.match(text, /HTTP 401/)
   assert.match(text, /来源：environment/)
   assert.match(text, /只读/)
@@ -767,7 +505,7 @@ test('a failed account query is reported once on the fallback card', async () =>
   ])
   await flush()
 
-  const text = panelText(harness)
+  const text = pageText(harness)
   assert.match(text, /3\.17/)
   assert.match(text, /账号余额读取失败：HTTP 429/)
   assert.equal(text.split('账号余额读取失败').length - 1, 1, 'the note is written once')
@@ -785,7 +523,7 @@ test('an unreadable credential shows its reason instead of "not configured"', as
   ])
   await flush()
 
-  const text = panelText(harness)
+  const text = pageText(harness)
   assert.match(text, /credentials: storage/)
   assert.doesNotMatch(text, /未配置/)
 })
@@ -801,7 +539,7 @@ test('host cards render as sent, including the quota windows', async () => {
   ])
   await flush()
 
-  const text = panelText(harness)
+  const text = pageText(harness)
   assert.match(text, /OpenCode Go/)
   assert.match(text, /5 小时/)
   assert.match(text, /5%/)
@@ -822,44 +560,6 @@ function makeTestDate(clock) {
     static now() { return clock.value }
   }
 }
-
-test('opening the panel re-reads the clock instead of reusing the mount reading', async () => {
-  // The panel component stays mounted while closed, so its `now` state survives
-  // between openings. A long-lived page therefore opens with a `now` from the
-  // mount; unless the open effect refreshes it, the first countdown is inflated
-  // by the whole idle period.
-  const clock = { value: Date.parse('2026-10-12T06:52:04Z') }
-  const realDate = globalThis.Date
-  globalThis.Date = makeTestDate(clock)
-  try {
-    const harness = mountPlugin(createStorage(), createSidebarDom(), {
-      fetch: snapshotOf([
-        {
-          id: 'opencode-go',
-          displayName: 'OpenCode Go',
-          configured: true,
-          data: {
-            kind: 'quota-windows',
-            windows: [{ id: 'rolling', status: 'ok', percent: 3, resetsAt: '2026-10-12T13:00:00Z' }],
-          },
-        },
-      ]),
-    })
-    harness.installDom()
-    harness.settle()
-
-    // Three idle hours between the mount and the open. The reset is 3h07m away.
-    clock.value = Date.parse('2026-10-12T09:52:04Z')
-    harness.openPanel()
-    await flush()
-
-    const text = panelText(harness)
-    assert.match(text, /3 小时 7 分后重置/)
-    assert.doesNotMatch(text, /6 小时 7 分/, 'the countdown must not include the idle hours')
-  } finally {
-    globalThis.Date = realDate
-  }
-})
 
 /** Pins the clock for the duration of `body`, so a rendered countdown is exact. */
 async function withClock(iso, body) {
@@ -894,27 +594,27 @@ function openDeepseekAt(iso) {
 test('the DeepSeek card reports peak hours and the wait for off-peak', async () => {
   // 2026-10-14 is a Wednesday, and 02:00 UTC is inside the 01:00-04:00 window.
   const harness = await openDeepseekAt('2026-10-14T02:00:00Z')
-  const text = panelText(harness)
+  const text = pageText(harness)
   assert.match(text, /高峰时段/)
   assert.match(text, /2 小时 0 分/)
 })
 
 test('off-peak counts down to the next peak opening', async () => {
   const harness = await openDeepseekAt('2026-10-14T05:00:00Z')
-  const text = panelText(harness)
+  const text = pageText(harness)
   assert.match(text, /低谷时段/)
   assert.match(text, /1 小时 0 分/)
 })
 
 test('the peak window is half-open: 04:00:00 UTC is already off-peak', async () => {
   const harness = await openDeepseekAt('2026-10-14T04:00:00Z')
-  assert.match(panelText(harness), /低谷时段/)
+  assert.match(pageText(harness), /低谷时段/)
 })
 
 test('a weekend is off-peak and the countdown skips to Monday', async () => {
   // 2026-10-17 is a Saturday; the next peak opening is Monday 01:00 UTC.
   const harness = await openDeepseekAt('2026-10-17T02:00:00Z')
-  const text = panelText(harness)
+  const text = pageText(harness)
   assert.match(text, /低谷时段/)
   assert.match(text, /1 天 23 小时/)
 })
@@ -923,7 +623,7 @@ test('a make-up workday that lands on a weekend is still off-peak', async () => 
   // 2026-02-14 is a 调休 Saturday. The weekend rule alone settles it, which is
   // why the table needs no workday rule; the next peak is after Spring Festival.
   const harness = await openDeepseekAt('2026-02-14T02:00:00Z')
-  const text = panelText(harness)
+  const text = pageText(harness)
   assert.match(text, /低谷时段/)
   assert.match(text, /9 天 23 小时/)
 })
@@ -931,31 +631,31 @@ test('a make-up workday that lands on a weekend is still off-peak', async () => 
 test('a public holiday on a weekday is off-peak, and the same weekday after it is peak', async () => {
   // 2026-10-01 (Thursday, National Day) against 2026-10-08 (Thursday, back at work).
   const holiday = await openDeepseekAt('2026-10-01T02:00:00Z')
-  assert.match(panelText(holiday), /低谷时段/)
+  assert.match(pageText(holiday), /低谷时段/)
 
   const workday = await openDeepseekAt('2026-10-08T02:00:00Z')
-  assert.match(panelText(workday), /高峰时段/)
+  assert.match(pageText(workday), /高峰时段/)
 })
 
 test('the countdown crosses a holiday block instead of landing inside it', async () => {
   // From inside the National Day block the next peak opening is a week out; a
   // clock-only walk would have called the next 01:00 UTC a transition.
   const harness = await openDeepseekAt('2026-10-01T02:00:00Z')
-  assert.match(panelText(harness), /6 天 23 小时/)
+  assert.match(pageText(harness), /6 天 23 小时/)
 })
 
 test('a table that no longer covers the year is reported on the card', async () => {
   // 2027-01-04 is a Monday, so the clock alone would say peak; with no 2027 in
   // the table the holiday clause is unanswerable, and the card says so.
   const harness = await openDeepseekAt('2027-01-04T02:00:00Z')
-  const text = panelText(harness)
+  const text = pageText(harness)
   assert.match(text, /节假日表未覆盖 2027 年/)
   assert.match(text, /请补充数据/)
 })
 
 test('a covered year shows no stale notice', async () => {
   const harness = await openDeepseekAt('2026-10-14T02:00:00Z')
-  assert.doesNotMatch(panelText(harness), /节假日表/)
+  assert.doesNotMatch(pageText(harness), /节假日表/)
 })
 
 test('the peak row belongs to the DeepSeek card alone', async () => {
@@ -969,32 +669,30 @@ test('the peak row belongs to the DeepSeek card alone', async () => {
   ])
   await flush()
 
-  const text = panelText(harness)
+  const text = pageText(harness)
   assert.doesNotMatch(text, /高峰时段/)
   assert.doesNotMatch(text, /低谷时段/)
 })
 
 test('a failed load shows the reason the host reported, not a bare status', async () => {
-  const harness = mountPlugin(createStorage(), createSidebarDom(), {
+  const harness = mountPlugin(createStorage(), {
     fetch: () => Promise.resolve({
       ok: false,
       status: 500,
       json: () => Promise.resolve({ error: '请求超时（15000 ms）' }),
     }),
   })
-  harness.installDom()
   harness.settle()
-  harness.openPanel()
   await flush()
 
-  const text = panelText(harness)
+  const text = pageText(harness)
   assert.match(text, /读取失败：请求超时（15000 ms）/)
   assert.doesNotMatch(text, /HTTP 500/, 'the status is not surfaced when the host explained itself')
 })
 
 test('a refresh failure keeps the last snapshot and labels it stale', async () => {
   let online = true
-  const harness = mountPlugin(createStorage(), createSidebarDom(), {
+  const harness = mountPlugin(createStorage(), {
     fetch: () => (online
       ? Promise.resolve({
         ok: true,
@@ -1011,54 +709,48 @@ test('a refresh failure keeps the last snapshot and labels it stale', async () =
       })
       : Promise.resolve({ ok: false, status: 503, json: () => Promise.resolve({ error: 'HTTP 503' }) })),
   })
-  harness.installDom()
   harness.settle()
-  harness.openPanel()
   await flush()
-  assert.match(panelText(harness), /12\.34/)
+  assert.match(pageText(harness), /12\.34/)
 
   online = false
   harness.timers.find((timer) => timer.ms === 60_000).callback()
   await flush()
 
-  const text = panelText(harness)
+  const text = pageText(harness)
   assert.match(text, /12\.34/, 'the last good numbers stay on screen')
   assert.match(text, /刷新失败，显示上次数据：HTTP 503/)
   assert.doesNotMatch(text, /读取失败/)
 })
 
 test('an unreachable host is reported in the panel language', async () => {
-  const harness = mountPlugin(createStorage(), createSidebarDom(), {
+  const harness = mountPlugin(createStorage(), {
     fetch: () => Promise.reject(new TypeError('Failed to fetch')),
   })
-  harness.installDom()
   harness.settle()
-  harness.openPanel()
   await flush()
 
-  const text = panelText(harness)
+  const text = pageText(harness)
   assert.match(text, /网络请求失败/)
   assert.doesNotMatch(text, /Failed to fetch/)
 })
 
 test('a coded host failure is localized from the code, not its wording', async () => {
-  const harness = mountPlugin(createStorage(), createSidebarDom(), {
+  const harness = mountPlugin(createStorage(), {
     fetch: () => Promise.resolve({
       ok: false,
       status: 502,
       json: () => Promise.resolve({ error: 'HTTP 502', errorCode: 'http', status: 502 }),
     }),
   })
-  harness.installDom()
   harness.settle()
-  harness.openPanel()
   await flush()
 
-  assert.match(panelText(harness), /读取失败：服务端返回 HTTP 502/)
+  assert.match(pageText(harness), /读取失败：服务端返回 HTTP 502/)
 })
 
 test('the same code reads in English when that is the panel language', async () => {
-  const harness = mountPlugin(createStorage(), createSidebarDom(), {
+  const harness = mountPlugin(createStorage(), {
     language: 'en',
     fetch: () => Promise.resolve({
       ok: false,
@@ -1066,28 +758,24 @@ test('the same code reads in English when that is the panel language', async () 
       json: () => Promise.resolve({ error: 'HTTP 502', errorCode: 'http', status: 502 }),
     }),
   })
-  harness.installDom()
   harness.settle()
-  harness.openPanel()
   await flush()
 
-  assert.match(panelText(harness), /Request failed: The server returned HTTP 502/)
+  assert.match(pageText(harness), /Request failed: The server returned HTTP 502/)
 })
 
 test('an unknown code falls back to the host wording', async () => {
-  const harness = mountPlugin(createStorage(), createSidebarDom(), {
+  const harness = mountPlugin(createStorage(), {
     fetch: () => Promise.resolve({
       ok: false,
       status: 500,
       json: () => Promise.resolve({ error: '凭据存储不可用', errorCode: 'unknown' }),
     }),
   })
-  harness.installDom()
   harness.settle()
-  harness.openPanel()
   await flush()
 
-  assert.match(panelText(harness), /读取失败：凭据存储不可用/)
+  assert.match(pageText(harness), /读取失败：凭据存储不可用/)
 })
 
 test('a coded card failure is localized in the card', async () => {
@@ -1102,7 +790,7 @@ test('a coded card failure is localized in the card', async () => {
   }])
   await flush()
 
-  assert.match(panelText(harness), /服务端返回 HTTP 401/)
+  assert.match(pageText(harness), /服务端返回 HTTP 401/)
 })
 
 test('a coded account failure is localized inside the account note', async () => {
@@ -1116,94 +804,13 @@ test('a coded account failure is localized inside the account note', async () =>
   }])
   await flush()
 
-  assert.match(panelText(harness), /账号余额读取失败：服务端返回 HTTP 429/)
+  assert.match(pageText(harness), /账号余额读取失败：服务端返回 HTTP 429/)
 })
 
-
-test('opening the panel moves focus into it and closing returns it to the trigger', () => {
-  const harness = mountPlugin(createStorage())
-  harness.installDom()
-  harness.settle()
-  harness.openPanel()
-
-  assert.equal(harness.dom.focused, 'panel')
-
-  harness.trigger.tree.props.onClick()
-  harness.settle()
-  assert.equal(harness.dom.focused, 'button')
-})
-
-test('the trigger points at the dialog it controls, which is labelled by its heading', () => {
-  const harness = mountPlugin(createStorage())
-  harness.installDom()
-  harness.settle()
-  harness.openPanel()
-
-  const panel = panelOf(harness)
-  assert.equal(panel.props.id, 'dsh-plan-spend-panel')
-  assert.equal(panel.props.tabIndex, -1)
-  assert.equal(harness.trigger.tree.props['aria-controls'], 'dsh-plan-spend-panel')
-
-  const heading = panel.props.children[0].props.children[0]
-  assert.equal(heading.props.id, 'dsh-plan-spend-panel-title')
-  assert.equal(panel.props['aria-labelledby'], 'dsh-plan-spend-panel-title')
-  assert.equal(panel.props['aria-modal'], undefined, 'the panel is a non-modal popover')
-
-  const grip = handleOf(harness)
-  assert.equal(grip.props.role, 'separator')
-  assert.equal(grip.props['aria-valuenow'], 330)
-  assert.equal(grip.props['aria-valuemin'], 260)
-  assert.match(grip.props['aria-valuetext'], /330 × 360/)
-})
-
-test('the grip resizes with the arrow keys and stores the result', () => {
-  const storage = createStorage()
-  const harness = mountPlugin(storage)
-  harness.installDom()
-  harness.settle()
-  harness.openPanel()
-
-  assert.equal(handleOf(harness).props.tabIndex, 0)
-
-  const prevented = []
-  handleOf(harness).props.onKeyDown({
-    key: 'ArrowRight',
-    shiftKey: false,
-    preventDefault: () => prevented.push('right'),
-  })
-  harness.settle()
-  assert.deepEqual(prevented, ['right'])
-  assert.equal(panelOf(harness).props.style.width, '346px')
-
-  handleOf(harness).props.onKeyDown({ key: 'ArrowDown', shiftKey: false, preventDefault: () => {} })
-  harness.settle()
-  assert.equal(panelOf(harness).props.style.height, '376px')
-  assert.equal(storage.raw.get('dsh-plan-spend.size'), JSON.stringify({ width: 346, height: 376 }))
-
-  handleOf(harness).props.onKeyDown({ key: 'ArrowRight', shiftKey: true, preventDefault: () => {} })
-  harness.settle()
-  assert.equal(panelOf(harness).props.style.width, '410px')
-})
-
-/** The header's refresh button (title, stamp, refresh, close). */
-function refreshButton(harness) {
-  return panelOf(harness).props.children[0].props.children[2]
-}
-
-test('a stored size larger than the measured placement is clamped on screen', () => {
-  const storage = createStorage({ 'dsh-plan-spend.size': JSON.stringify({ width: 1000, height: 1000 }) })
-  const harness = mountPlugin(storage)
-  harness.installDom()
-  harness.settle()
-  harness.openPanel()
-
-  const style = panelOf(harness).props.style
-  assert.deepEqual({ width: style.width, height: style.height }, { width: '902px', height: '782px' })
-})
 
 test('a slower earlier response cannot overwrite the newer snapshot', async () => {
   const pending = []
-  const harness = mountPlugin(createStorage(), createSidebarDom(), {
+  const harness = mountPlugin(createStorage(), {
     fetch: () => new Promise((resolve) => { pending.push(resolve) }),
   })
   const card = (total) => ({
@@ -1213,21 +820,19 @@ test('a slower earlier response cannot overwrite the newer snapshot', async () =
     data: { kind: 'balance', label: 'balance.total', wallets: [{ currency: 'CNY', total }] },
   })
 
-  harness.installDom()
   harness.settle()
-  harness.openPanel()
-  assert.equal(pending.length, 1)
+  assert.equal(pending.length, 1, 'the page loads on mount')
 
-  refreshButton(harness).props.onClick()
+  refreshOf(harness).props.onClick()
   harness.settle()
   assert.equal(pending.length, 2)
 
   pending[1]({ ok: true, json: () => Promise.resolve({ generatedAt: 1_700_000_000_000, cards: [card('later')] }) })
   await flush()
-  assert.match(panelText(harness), /later/)
+  assert.match(pageText(harness), /later/)
 
   pending[0]({ ok: true, json: () => Promise.resolve({ generatedAt: 1_600_000_000_000, cards: [card('earlier')] }) })
   await flush()
-  assert.match(panelText(harness), /later/)
-  assert.doesNotMatch(panelText(harness), /earlier/)
+  assert.match(pageText(harness), /later/)
+  assert.doesNotMatch(pageText(harness), /earlier/)
 })

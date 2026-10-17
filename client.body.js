@@ -7,23 +7,19 @@
  * generates around this file.
  *
  * --- Where the UI lives ---
- * Two entries, split because the sidebar clips its own overflow:
- * - `sidebar.footer.action` (id 'dsh-plan-spend') holds the trigger. That seat is
- *   the sidebar's own action row and hands each entry `{ wide }`, so the button
- *   follows the collapse/expand rail without any listener of ours. The row sits
- *   directly above the shell's account/settings row: `sidebar.settings` is a
- *   single-seat slot owned by the shipped settings UI, so a same-row seat beside
- *   the account panel does not exist and taking that one would shadow it.
- * - `shell.overlay` holds the panel. The layer is frame-wide and outside every
- *   column, so the panel can render beside the sidebar instead of clipping
- *   inside it.
+ * Two seats, both owned by the shipped navigation:
+ * - `sidebar.panellist` (id 'dsh-plan-spend', order 20) is the sidebar's own
+ *   navigation row, so the entry sits between 自动化任务 (10) and 记忆系统 (30),
+ *   collapses to its glyph on the rail, and shows the active state the way the
+ *   shipped rows do.
+ * - `main` (keyed by the same id) is the middle column's page. Selecting the
+ *   row replaces the conversation with the meter page, so the meter can never
+ *   overlap what the conversation is showing, and the row behaves exactly like
+ *   the shipped rows beside it.
  *
- * --- Placement ---
- * The panel measures the frame-level column that holds the button (the sidebar,
- * found structurally rather than by class name) and anchors its left edge just
- * past that column's right edge, with its bottom at the button's bottom. Its
- * size is user-resizable and remembered; the grip sits in the corner farthest
- * from the button.
+ * --- What the page shows ---
+ * The snapshot is re-read on mount and every minute, with a manual refresh in
+ * the page header; the countdowns re-tick every 30s while the page is mounted.
  *
  * --- Where the numbers come from ---
  * `GET /dsh-plan-spend/snapshot` on the harness web server, owned by this plugin's
@@ -41,89 +37,13 @@
  */
 const UM_ROUTE = '/dsh-plan-spend/snapshot'
 const UM_REFRESH_MS = 60_000
-const UM_SIZE_KEY = 'dsh-plan-spend.size'
-// Keys from before the identifier rename: the position is dead and only dropped,
-// the size is adopted once so the rename does not reset a user's panel.
-const UM_LEGACY_POSITION_KEY = 'usage-meter.position'
-const UM_LEGACY_SIZE_KEY = 'usage-meter.size'
-const UM_MIN_SIZE = { width: 260, height: 160 }
-const UM_DEFAULT_SIZE = { width: 330, height: 360 }
-const UM_EDGE_MARGIN_PX = 8
-const UM_PANEL_GAP_PX = 10
-const UM_RESIZE_THRESHOLD_PX = 3
-const UM_TRIGGER_ORDER = 20
-const UM_PANEL_ORDER = 30
+const UM_PANEL_ID = 'dsh-plan-spend'
+/** Sits between 自动化任务 (10) and 记忆系统 (30) in the navigation list. */
+const UM_NAV_ORDER = 20
 /** The shipped sidebar glyph size; the row is one of the sidebar's own rows. */
 const UM_ICON_SIZE = 16
-const UM_LABEL_GAP_PX = 8
-/** The panel's DOM id, so the trigger can point `aria-controls` at it. */
-const UM_PANEL_ID = 'dsh-plan-spend-panel'
-/** The heading the dialog is labelled by, instead of a duplicate aria-label. */
-const UM_PANEL_TITLE_ID = 'dsh-plan-spend-panel-title'
-/** Arrow-key resize step; Shift makes it four times larger. */
-const UM_KEYBOARD_RESIZE_STEP = 16
 
 const WINDOW_ORDER = ['rolling', 'weekly', 'monthly']
-
-function clamp(value, min, max) {
-  return Math.min(Math.max(value, min), Math.max(min, max))
-}
-
-/** The box the measured anchor allows, or null before the first measure. */
-function placementBounds(placement) {
-  return placement ? { width: placement.maxWidth, height: placement.maxHeight } : null
-}
-
-function readStoredJson(key) {
-  try {
-    if (typeof localStorage === 'undefined') return null
-    const raw = localStorage.getItem(key)
-    if (!raw) return null
-    const value = JSON.parse(raw)
-    return value && typeof value === 'object' ? value : null
-  } catch (error) {
-    return null
-  }
-}
-
-function writeStoredJson(key, value) {
-  try {
-    if (typeof localStorage !== 'undefined') localStorage.setItem(key, JSON.stringify(value))
-  } catch (error) {
-    // A storage that rejects writes must not break the meter.
-  }
-}
-
-function dropStoredKey(key) {
-  try {
-    if (typeof localStorage !== 'undefined') localStorage.removeItem(key)
-  } catch (error) {
-    // Same as above: storage is optional.
-  }
-}
-
-function hasStoredKey(key) {
-  try {
-    return typeof localStorage !== 'undefined' && localStorage.getItem(key) !== null
-  } catch (error) {
-    return false
-  }
-}
-
-/** A stored size that carries at least one usable dimension, else null. */
-function validSize(value) {
-  if (!value) return null
-  const width = Number.isFinite(value.width) && value.width > 0 ? value.width : null
-  const height = Number.isFinite(value.height) && value.height > 0 ? value.height : null
-  return width === null && height === null ? null : { width, height }
-}
-
-function readStoredSize() {
-  // An unreadable current value must reset the panel, not resurrect the old
-  // key: otherwise clearing `dsh-plan-spend.size` would stop working.
-  if (hasStoredKey(UM_SIZE_KEY)) return validSize(readStoredJson(UM_SIZE_KEY))
-  return validSize(readStoredJson(UM_LEGACY_SIZE_KEY))
-}
 
 function formatCountdown(target, now) {
   if (typeof target !== 'number' || !Number.isFinite(target)) return ''
@@ -313,60 +233,6 @@ function countdownText(parts, t) {
   return t('reset.minutes').replace('{m}', String(parts.minutes))
 }
 
-/**
- * The two entries are separate registrations in separate trees, so they share
- * one plain store: the trigger owns the button element and the open flag, the
- * panel only reads them. `revision` lets the trigger ask for a re-measure when
- * the sidebar changes width without the frame resizing.
- */
-function makeMeterStore() {
-  const state = { open: false, button: null, revision: 0 }
-  const listeners = new Set()
-  const emit = () => { for (const listener of Array.from(listeners)) listener() }
-  return {
-    isOpen: () => state.open,
-    button: () => state.button,
-    revision: () => state.revision,
-    setButton: (element) => { state.button = element },
-    toggle: () => { state.open = !state.open; state.revision += 1; emit() },
-    close: () => { if (!state.open) return; state.open = false; state.revision += 1; emit() },
-    touch: () => { state.revision += 1; emit() },
-    subscribe: (listener) => { listeners.add(listener); return () => listeners.delete(listener) },
-  }
-}
-
-/**
- * Places the panel at the top of the workspace, just outside the frame-level
- * column that holds the button. The column is found by climbing the DOM to the
- * frame's direct child, so the decision never depends on hashed class names or
- * on the sidebar's width.
- */
-function measurePlacement(buttonEl, layerEl) {
-  if (!buttonEl || !layerEl) return null
-  const buttonRect = buttonEl.getBoundingClientRect()
-  if (buttonRect.width === 0 && buttonRect.height === 0) return null
-  const layerRect = layerEl.getBoundingClientRect()
-  const frame = layerEl.parentElement
-  const boundary = frame || layerEl
-  let column = buttonEl
-  while (column.parentElement && column.parentElement !== boundary) column = column.parentElement
-  const columnRect = column.getBoundingClientRect()
-  const left = Math.round(Math.max(0, columnRect.right - layerRect.left + UM_PANEL_GAP_PX))
-  const top = Math.round(Math.max(0, columnRect.top - layerRect.top + UM_PANEL_GAP_PX))
-  return {
-    left,
-    top,
-    maxWidth: Math.max(UM_MIN_SIZE.width, Math.round(layerRect.width - left - UM_EDGE_MARGIN_PX)),
-    maxHeight: Math.max(UM_MIN_SIZE.height, Math.round(layerRect.height - top - UM_EDGE_MARGIN_PX)),
-  }
-}
-
-function samePlacement(a, b) {
-  if (a === b) return true
-  if (!a || !b) return false
-  return a.left === b.left && a.top === b.top && a.maxWidth === b.maxWidth && a.maxHeight === b.maxHeight
-}
-
 function BalanceBody(props) {
   const { data, t } = props
   const wallets = data.wallets || []
@@ -503,87 +369,42 @@ function ProviderCard(props) {
   )
 }
 
-/** The `sidebar.footer.action` entry: the trigger that opens and closes the panel. */
-function UsageTrigger(props) {
-  const { t, store, wide } = props
-  const [open, setOpen] = React.useState(() => store.isOpen())
-  const buttonRef = React.useRef(null)
-
-  React.useEffect(() => store.subscribe(() => setOpen(store.isOpen())), [store])
-  React.useEffect(() => {
-    store.setButton(buttonRef.current)
-    store.touch()
-    return () => store.setButton(null)
-  }, [store, wide])
-
-  const compact = wide === false
-  // The row mirrors the sidebar's own panel rows (padding 7/8, side margin 2, a
-  // 36px row, gap 8, 14/22 type) and their 16px glyph, so it reads as one more
-  // navigation row rather than a second account row.
-
-  return React.createElement('button', {
-    ref: buttonRef,
-    type: 'button',
-    className: 'um-button' + (compact ? ' um-button-compact' : '') + (open ? ' um-button-open' : ''),
-    title: t('button.title'),
-    'aria-label': t('button.title'),
-    'aria-expanded': open,
-    'aria-haspopup': 'dialog',
-    // Only point at the panel while it exists: a dangling IDREF is an error.
-    'aria-controls': open ? UM_PANEL_ID : undefined,
-    onClick: () => store.toggle(),
+/**
+ * The `sidebar.panellist` entry: the gauge glyph the navigation row carries.
+ * Every row in that list is a single glyph, so the entry renders only the mark
+ * and lets the sidebar draw the row, its active state and its label.
+ */
+function UsageIcon(props) {
+  const size = props && props.size ? props.size : UM_ICON_SIZE
+  return React.createElement('svg', {
+    className: 'um-nav-icon',
+    viewBox: '0 0 16 16',
+    width: size,
+    height: size,
+    'aria-hidden': 'true',
+    fill: 'none',
+    stroke: 'currentColor',
+    strokeWidth: 1,
   },
-    React.createElement('svg', {
-      className: 'um-button-icon',
-      viewBox: '0 0 16 16',
-      width: UM_ICON_SIZE,
-      height: UM_ICON_SIZE,
-      'aria-hidden': 'true',
-      fill: 'none',
-      stroke: 'currentColor',
-      strokeWidth: 1,
-    },
-      // The icon set's own gauge glyph: a 16px grid, 1px stroke, a 270° dial with a 45°
-      // needle and a filled 1.25r hub, so the row matches the shipped navigation rows.
-      React.createElement('path', { d: 'M3.4041 13.096C2.49514 12.187 1.87614 11.0288 1.62537 9.76798C1.37459 8.50716 1.50331 7.20028 1.99525 6.01261C2.48719 4.82494 3.32025 3.80981 4.3891 3.09557C5.45795 2.38134 6.71458 2.00008 8.0001 2C9.28563 2.00008 10.5423 2.38134 11.6111 3.09557C12.68 3.80981 13.513 4.82494 14.005 6.01261C14.4969 7.20028 14.6256 8.50716 14.3748 9.76798C14.1241 11.0288 13.5051 12.187 12.5961 13.096' }),
-      React.createElement('path', { d: 'M8 8.49994L11.6114 4.88855' }),
-      React.createElement('path', { d: 'M8 9.75C8.69036 9.75 9.25 9.19036 9.25 8.5C9.25 7.80964 8.69036 7.25 8 7.25C7.30964 7.25 6.75 7.80964 6.75 8.5C6.75 9.19036 7.30964 9.75 8 9.75Z', fill: 'currentColor', stroke: 'none' })),
-    compact ? null : React.createElement('span', { className: 'um-button-label' }, t('button.label')))
+    // The icon set's own gauge glyph: a 16px grid, 1px stroke, a 270° dial with
+    // a 45° needle and a filled 1.25r hub, so the row matches the shipped rows.
+    React.createElement('path', { d: 'M3.4041 13.096C2.49514 12.187 1.87614 11.0288 1.62537 9.76798C1.37459 8.50716 1.50331 7.20028 1.99525 6.01261C2.48719 4.82494 3.32025 3.80981 4.3891 3.09557C5.45795 2.38134 6.71458 2.00008 8.0001 2C9.28563 2.00008 10.5423 2.38134 11.6111 3.09557C12.68 3.80981 13.513 4.82494 14.005 6.01261C14.4969 7.20028 14.6256 8.50716 14.3748 9.76798C14.1241 11.0288 13.5051 12.187 12.5961 13.096' }),
+    React.createElement('path', { d: 'M8 8.49994L11.6114 4.88855' }),
+    React.createElement('path', { d: 'M8 9.75C8.69036 9.75 9.25 9.19036 9.25 8.5C9.25 7.80964 8.69036 7.25 8 7.25C7.30964 7.25 6.75 7.80964 6.75 8.5C6.75 9.19036 7.30964 9.75 8 9.75Z', fill: 'currentColor', stroke: 'none' }))
 }
 
-/** The `shell.overlay` entry: the panel, rendered outside the sidebar's column. */
-function UsagePanel(props) {
-  const { t, store } = props
-  const [open, setOpen] = React.useState(() => store.isOpen())
-  const [revision, setRevision] = React.useState(() => store.revision())
-  const [state, setState] = React.useState({ phase: 'idle', data: null, error: null })
+/**
+ * The `main` entry, keyed by the row's id: selecting the row replaces the
+ * conversation with this page, so the meter can never overlap what the
+ * conversation is showing.
+ */
+function UsagePage(props) {
+  const { t } = props
+  const [state, setState] = React.useState({ phase: 'loading', data: null, error: null })
   const [now, setNow] = React.useState(() => Date.now())
-  const [placement, setPlacement] = React.useState(null)
-  const [size, setSize] = React.useState(readStoredSize)
-  const [resizing, setResizing] = React.useState(false)
-  const rootRef = React.useRef(null)
-  const panelRef = React.useRef(null)
-  const resizeRef = React.useRef(null)
-  // Only the newest load may publish: the 60s tick, a manual refresh and a
-  // reopening can overlap, and an older response must not overwrite a newer one.
+  // Only the newest load may publish: the 60s tick and a manual refresh can
+  // overlap, and an older response must not overwrite a newer one.
   const request_seq = React.useRef(0)
-
-  React.useEffect(() => store.subscribe(() => {
-    setOpen(store.isOpen())
-    setRevision(store.revision())
-  }), [store])
-
-  // The manual-position feature is gone and the size key was renamed; adopt a
-  // pre-rename size under the new key once, then drop both leftovers. The read
-  // above stays a pure lookup, so clearing the new key still resets the panel.
-  React.useEffect(() => {
-    if (!hasStoredKey(UM_SIZE_KEY)) {
-      const legacy_size = validSize(readStoredJson(UM_LEGACY_SIZE_KEY))
-      if (legacy_size) writeStoredJson(UM_SIZE_KEY, legacy_size)
-    }
-    dropStoredKey(UM_LEGACY_POSITION_KEY)
-    dropStoredKey(UM_LEGACY_SIZE_KEY)
-  }, [])
 
   const load = React.useCallback((force) => {
     const request = request_seq.current + 1
@@ -595,7 +416,7 @@ function UsagePanel(props) {
       .then((response) => {
         if (response.ok) return response.json()
         // The host explains the failure (`请求超时（15000 ms）`) and names it with
-        // an `errorCode`; the panel localizes the code and keeps the text only as
+        // an `errorCode`; the page localizes the code and keeps the text only as
         // a fallback for codes it does not know.
         return response.json()
           .catch(() => null)
@@ -620,244 +441,62 @@ function UsagePanel(props) {
       )
   }, [t])
 
+  // The page mounts with the route and unmounts when another row is selected,
+  // so one effect owns both the snapshot and the two clocks.
   React.useEffect(() => {
-    if (!open) return undefined
-    // The component stays mounted while closed, so `now` survives between
-    // openings. Without this the first countdown of a session would be measured
-    // from the mount (or the previous opening) and so read long by the whole
-    // idle period, contradicting the absolute reset clock beside it.
     setNow(Date.now())
     load(false)
     const refresh = setInterval(() => load(false), UM_REFRESH_MS)
     const tick = setInterval(() => setNow(Date.now()), 30_000)
     return () => { clearInterval(refresh); clearInterval(tick) }
-  }, [open, load])
-
-  /**
-   * Esc and a press anywhere outside the panel both dismiss it. The trigger is
-   * excluded from the outside test so its own click still performs the toggle
-   * rather than closing and immediately reopening.
-   */
-  React.useEffect(() => {
-    if (!open || typeof document === 'undefined') return undefined
-    const onKeyDown = (event) => { if (event.key === 'Escape') store.close() }
-    const onPointerDown = (event) => {
-      const target = event.target
-      if (!target) return
-      const panelEl = panelRef.current
-      if (panelEl && typeof panelEl.contains === 'function' && panelEl.contains(target)) return
-      const buttonEl = store.button()
-      if (buttonEl && typeof buttonEl.contains === 'function' && buttonEl.contains(target)) return
-      store.close()
-    }
-    document.addEventListener('keydown', onKeyDown)
-    document.addEventListener('pointerdown', onPointerDown, true)
-    return () => {
-      document.removeEventListener('keydown', onKeyDown)
-      document.removeEventListener('pointerdown', onPointerDown, true)
-    }
-  }, [open, store])
-
-  // Re-measure on open, on a sidebar width change, and on a frame resize.
-  React.useEffect(() => {
-    if (!open) return undefined
-    const layerEl = rootRef.current ? rootRef.current.offsetParent : null
-    if (!layerEl) return undefined
-    const measure = () => {
-      const next = measurePlacement(store.button(), layerEl)
-      if (next) setPlacement((current) => (samePlacement(current, next) ? current : next))
-    }
-    measure()
-    // The sidebar rows may still be settling when the panel first opens, and a
-    // layer-only ResizeObserver never sees an internal row shift; one frame later
-    // the geometry is final, so the anchor lands exactly on the button.
-    const frame = typeof requestAnimationFrame === 'function' ? requestAnimationFrame(measure) : null
-    const cancel = () => {
-      if (frame !== null && typeof cancelAnimationFrame === 'function') cancelAnimationFrame(frame)
-    }
-    if (typeof ResizeObserver === 'undefined') return cancel
-    const observer = new ResizeObserver(measure)
-    observer.observe(layerEl)
-    return () => { observer.disconnect(); cancel() }
-  }, [open, revision, store])
-
-  // Focus enters the panel on open and returns to the trigger on close, so Esc
-  // does not leave a keyboard user at the top of the document.
-  const wasOpen = React.useRef(false)
-  React.useEffect(() => {
-    if (open) {
-      const panel = panelRef.current
-      if (panel && typeof panel.focus === 'function') panel.focus()
-    } else if (wasOpen.current) {
-      const trigger = store.button()
-      if (trigger && typeof trigger.focus === 'function') trigger.focus()
-    }
-    wasOpen.current = open
-  }, [open, store])
-
-  /**
-   * The grip sits in the panel's bottom-right corner — the one farthest from the
-   * top anchor — so dragging right grows the width and dragging down grows the
-   * height while the left/top anchoring keeps the panel clear of the sidebar.
-   */
-  const onHandlePointerDown = (event) => {
-    if (event.button !== 0) return
-    const el = panelRef.current
-    if (!el) return
-    const rect = el.getBoundingClientRect()
-    resizeRef.current = {
-      pointerId: event.pointerId,
-      startX: event.clientX,
-      startY: event.clientY,
-      startWidth: rect.width,
-      startHeight: rect.height,
-      moved: false,
-      width: rect.width,
-      height: rect.height,
-    }
-    event.currentTarget.setPointerCapture(event.pointerId)
-    event.preventDefault()
-  }
-
-  const onHandlePointerMove = (event) => {
-    const drag = resizeRef.current
-    if (!drag || drag.pointerId !== event.pointerId) return
-    const dx = event.clientX - drag.startX
-    const dy = event.clientY - drag.startY
-    if (!drag.moved && Math.abs(dx) < UM_RESIZE_THRESHOLD_PX && Math.abs(dy) < UM_RESIZE_THRESHOLD_PX) return
-    drag.moved = true
-    setResizing(true)
-    const bounds = placementBounds(placement) || UM_DEFAULT_SIZE
-    drag.width = clamp(Math.round(drag.startWidth + dx), UM_MIN_SIZE.width, bounds.width)
-    drag.height = clamp(Math.round(drag.startHeight + dy), UM_MIN_SIZE.height, bounds.height)
-    setSize({ width: drag.width, height: drag.height })
-  }
-
-  const onHandlePointerUp = (event) => {
-    const drag = resizeRef.current
-    if (!drag || drag.pointerId !== event.pointerId) return
-    resizeRef.current = null
-    setResizing(false)
-    try { event.currentTarget.releasePointerCapture(event.pointerId) } catch (error) { /* already released */ }
-    if (drag.moved) writeStoredJson(UM_SIZE_KEY, { width: drag.width, height: drag.height })
-  }
-
-  if (!open) return null
+  }, [load])
 
   const cards = state.data && Array.isArray(state.data.cards) ? state.data.cards : []
   const configured = cards.filter((card) => card.configured)
-  const width = (size && size.width) || UM_DEFAULT_SIZE.width
-  const height = (size && size.height) || UM_DEFAULT_SIZE.height
+  const stamp = state.data && state.data.generatedAt ? formatClock(state.data.generatedAt) : ''
 
-  /**
-   * The grip is the only resize affordance, so it also answers the arrow keys:
-   * Left/Right change the width, Down/Up the height, Shift takes a bigger step.
-   */
-  const onHandleKeyDown = (event) => {
-    const step = event.shiftKey ? UM_KEYBOARD_RESIZE_STEP * 4 : UM_KEYBOARD_RESIZE_STEP
-    const bounds = placementBounds(placement) || UM_DEFAULT_SIZE
-    const wanted = { width, height }
-    if (event.key === 'ArrowLeft') wanted.width = width - step
-    else if (event.key === 'ArrowRight') wanted.width = width + step
-    else if (event.key === 'ArrowDown') wanted.height = height + step
-    else if (event.key === 'ArrowUp') wanted.height = height - step
-    else return
-    event.preventDefault()
-    const next = {
-      width: clamp(wanted.width, UM_MIN_SIZE.width, bounds.width),
-      height: clamp(wanted.height, UM_MIN_SIZE.height, bounds.height),
-    }
-    setSize(next)
-    writeStoredJson(UM_SIZE_KEY, next)
-  }
-
-  const anchorStyle = placement
-    ? {
-      left: placement.left + 'px',
-      top: placement.top + 'px',
-      maxWidth: placement.maxWidth + 'px',
-    }
-    : { left: '64px', top: '16px' }
-  // A stored size can predate this window's placement; clamp the box to the
-  // space the layer measured so the panel never hangs past its anchor.
-  const panel_bounds = placementBounds(placement) || { width, height }
-  const shown_width = Math.min(width, panel_bounds.width)
-  const shown_height = Math.min(height, panel_bounds.height)
-  const panelStyle = {
-    width: shown_width + 'px',
-    height: shown_height + 'px',
-    maxHeight: placement ? placement.maxHeight + 'px' : undefined,
-  }
-
-  return React.createElement('div', { className: 'um-anchor', ref: rootRef, style: anchorStyle },
-    React.createElement('div', {
-      className: 'um-panel' + (resizing ? ' um-panel-resizing' : ''),
-      ref: panelRef,
-      id: UM_PANEL_ID,
-      role: 'dialog',
-      tabIndex: -1,
-      // Labelled by the visible heading. It is deliberately not aria-modal: the
-      // page behind stays operable (outside presses close it), so claiming
-      // modality would hide live content from assistive tech.
-      'aria-labelledby': UM_PANEL_TITLE_ID,
-      style: panelStyle,
-    },
-      React.createElement('header', { className: 'um-panel-head' },
-        React.createElement('span', { className: 'um-panel-title', id: UM_PANEL_TITLE_ID }, t('panel.title')),
-        React.createElement('span', { className: 'um-panel-stamp' },
-          state.data && state.data.generatedAt ? formatClock(state.data.generatedAt) : ''),
+  return React.createElement('section', {
+    className: 'um-page',
+    'aria-busy': state.phase === 'loading' ? true : undefined,
+  },
+    // The page header is the frame's drag handle, like every other panel page.
+    React.createElement('header', { className: 'um-page-head', 'data-window-drag': true },
+      React.createElement('div', { className: 'um-page-heading' },
+        React.createElement('h1', { className: 'um-page-title' }, t('panel.title')),
+        stamp
+          ? React.createElement('p', { className: 'um-page-intro' }, t('panel.updated').replace('{time}', stamp))
+          : null),
+      React.createElement('div', { className: 'um-toolbar' },
         React.createElement('button', {
-          className: 'um-icon-btn',
+          className: 'um-icon-button',
+          type: 'button',
           title: t('panel.refresh'),
           'aria-label': t('panel.refresh'),
+          'aria-busy': state.phase === 'loading' ? true : undefined,
           onClick: () => load(true),
-        }, '⟳'),
-        React.createElement('button', {
-          className: 'um-icon-btn',
-          title: t('panel.close'),
-          'aria-label': t('panel.close'),
-          onClick: () => store.close(),
-        }, '×')),
-      React.createElement('div', { className: 'um-panel-body' },
-        state.phase === 'loading' && cards.length === 0
-          ? React.createElement('div', { className: 'um-muted' }, t('panel.loading'))
-          : null,
-        state.phase === 'failed'
-          ? React.createElement('div', { className: cards.length === 0 ? 'um-error' : 'um-warn' },
-            t(cards.length === 0 ? 'panel.failed' : 'panel.stale').replace('{reason}', state.error))
-          : null,
-        state.phase !== 'failed' && state.phase !== 'loading' && configured.length === 0
-          ? React.createElement('div', { className: 'um-muted' }, t('panel.none'))
-          : null,
-        cards.map((card) => React.createElement(ProviderCard, { key: card.id, card, t, now })),
-      ),
-      React.createElement('div', {
-        className: 'um-resize' + (resizing ? ' um-resize-active' : ''),
-        title: t('panel.resize'),
-        'aria-label': t('panel.resize'),
-        role: 'separator',
-        tabIndex: 0,
-        'aria-valuenow': shown_width,
-        'aria-valuemin': UM_MIN_SIZE.width,
-        'aria-valuemax': Math.max(UM_MIN_SIZE.width, panel_bounds.width),
-        'aria-valuetext': shown_width + ' × ' + shown_height,
-        onKeyDown: onHandleKeyDown,
-        onPointerDown: onHandlePointerDown,
-        onPointerMove: onHandlePointerMove,
-        onPointerUp: onHandlePointerUp,
-        onPointerCancel: onHandlePointerUp,
-      }),
-    ),
-  )
+        }, '⟳'))),
+    React.createElement('div', { className: 'um-page-body' },
+      state.phase === 'loading' && cards.length === 0
+        ? React.createElement('div', { className: 'um-muted' }, t('panel.loading'))
+        : null,
+      state.phase === 'failed'
+        ? React.createElement('div', { className: cards.length === 0 ? 'um-error' : 'um-warn' },
+          t(cards.length === 0 ? 'panel.failed' : 'panel.stale').replace('{reason}', state.error))
+        : null,
+      state.phase !== 'failed' && state.phase !== 'loading' && configured.length === 0
+        ? React.createElement('div', { className: 'um-muted' }, t('panel.none'))
+        : null,
+      cards.length === 0
+        ? null
+        : React.createElement('div', { className: 'um-page-cards' },
+          cards.map((card) => React.createElement(ProviderCard, { key: card.id, card, t, now })))))
 }
 
 const ZH_DICT = {
   'button.label': '用量',
-  'button.title': '查看套餐用量',
-  'panel.title': '套餐用量详细',
+  'panel.title': '套餐用量',
   'panel.refresh': '刷新',
-  'panel.close': '关闭',
-  'panel.resize': '拖动或方向键调整大小',
+  'panel.updated': '更新于 {time}',
   'panel.loading': '正在读取…',
   'panel.failed': '读取失败：{reason}',
   'panel.stale': '刷新失败，显示上次数据：{reason}',
@@ -895,11 +534,9 @@ const ZH_DICT = {
 
 const EN_DICT = {
   'button.label': 'Usage',
-  'button.title': 'View plan usage',
   'panel.title': 'Plan usage',
   'panel.refresh': 'Refresh',
-  'panel.close': 'Close',
-  'panel.resize': 'Drag, or use the arrow keys, to resize',
+  'panel.updated': 'Updated {time}',
   'panel.loading': 'Loading…',
   'panel.failed': 'Request failed: {reason}',
   'panel.stale': 'Refresh failed; showing the last values: {reason}',
@@ -936,21 +573,19 @@ const EN_DICT = {
 }
 
 const UM_CSS = `
-.um-button { box-sizing: border-box; cursor: pointer; flex: 1; min-width: 0; margin: 0 2px; padding: 7px 8px; min-height: 36px; display: flex; align-items: center; gap: ${UM_LABEL_GAP_PX}px; overflow: hidden; border: none; border-radius: var(--dsw-radius-md, 8px); background: transparent; color: var(--dsw-alias-label-primary); font-family: inherit; font-size: 14px; line-height: 22px; user-select: none; -webkit-user-select: none; }
-.um-button:hover, .um-button-open { background: var(--dsw-alias-interactive-bg-hover) }
-.um-button-compact { flex: none; width: 36px; height: 36px; margin: 0; padding: 0; justify-content: center; gap: 0; }
-.um-button-icon { flex: none; display: block; width: 16px; height: 16px; }
-.um-button-compact .um-button-icon { width: 18px; height: 18px; }
-.um-button-label { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.um-anchor { position: absolute; pointer-events: none; z-index: 1; }
-.um-panel { pointer-events: auto; position: relative; display: flex; flex-direction: column; min-width: 260px; min-height: 160px; overflow: hidden; border: .5px solid var(--dsw-alias-border-l2); background: var(--dsw-alias-bg-layer-1); border-radius: 12px; box-shadow: 0 8px 28px rgba(15, 23, 42, .22); color: var(--dsw-alias-label-primary); font: 13px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif; }
-.um-panel-resizing { user-select: none; -webkit-user-select: none; }
-.um-panel-head { display: flex; align-items: center; gap: 8px; padding: 9px 14px; border-bottom: .5px solid var(--dsw-alias-border-l1); flex: none; }
-.um-panel-title { font-weight: 600; font-size: 13px; }
-.um-panel-stamp { margin-left: auto; font-size: 11px; color: var(--dsw-alias-label-tertiary, var(--dsw-alias-label-secondary)); font-variant-numeric: tabular-nums; }
-.um-icon-btn { border: none; background: none; color: var(--dsw-alias-label-secondary); cursor: pointer; font-size: 14px; line-height: 18px; padding: 0 4px; border-radius: 5px; }
-.um-icon-btn:hover { color: var(--dsw-alias-label-primary); background: var(--dsw-alias-interactive-bg-hover, rgba(127, 127, 127, .12)); }
-.um-panel-body { flex: 1; min-height: 0; padding: 10px 12px 18px; overflow: auto; display: flex; flex-direction: column; gap: 10px; }
+.um-nav-icon { flex: none; display: block; }
+.um-page { box-sizing: border-box; width: 100%; height: 100%; display: flex; flex-direction: column; align-items: center; gap: 32px; padding: 0 clamp(24px, 4vw, 48px) 48px; overflow: auto; color: var(--dsw-alias-label-primary); }
+.um-page > * { width: 100%; max-width: 960px; }
+.um-page-head { box-sizing: border-box; flex-wrap: wrap; justify-content: space-between; align-items: flex-start; gap: 16px; padding-top: 28px; display: flex; }
+[data-platform=darwin] .um-page-head { padding-top: calc(28px + var(--dsh-frame-top-clearance, 0px)); }
+.um-page-heading { min-width: 0; }
+.um-page-title { margin: 0; font-size: 20px; font-weight: 500; line-height: 28px; }
+.um-page-intro { color: var(--dsw-alias-label-secondary); align-items: center; gap: 4px; margin: 4px 0 0; font-size: 13px; line-height: 20px; display: flex; font-variant-numeric: tabular-nums; }
+.um-toolbar { white-space: nowrap; flex: none; justify-content: flex-end; align-items: center; gap: 16px; display: flex; }
+.um-icon-button { border-radius: var(--dsw-radius-sm, 6px); width: 28px; height: 28px; padding: 0; color: var(--dsw-alias-label-caption, var(--dsw-alias-label-secondary)); cursor: pointer; background: 0 0; border: 0; justify-content: center; align-items: center; display: inline-flex; font-size: 15px; line-height: 1; }
+.um-icon-button:hover { background: var(--dsw-alias-interactive-bg-hover); color: var(--dsw-alias-label-primary); }
+.um-page-body { display: flex; flex-direction: column; gap: 16px; }
+.um-page-cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); align-items: start; gap: 16px; }
 .um-card { border: .5px solid var(--dsw-alias-border-l1); border-radius: 9px; padding: 9px 11px 11px; background: var(--dsw-alias-bg-base); }
 .um-card-off { opacity: .6; }
 .um-card-title { margin: 0 0 8px; font-size: 12px; font-weight: 600; color: var(--dsw-alias-label-secondary); }
@@ -976,8 +611,6 @@ const UM_CSS = `
 .um-peak { margin-top: 8px; padding-top: 8px; border-top: .5px solid var(--dsw-alias-border-l1); }
 .um-peak-state { font-size: 11px; color: var(--dsw-alias-label-secondary); font-variant-numeric: tabular-nums; }
 .um-peak-on { color: var(--dsw-alias-state-warning-primary, #f59e0b); }
-.um-resize { position: absolute; right: 0; bottom: 0; width: 18px; height: 18px; z-index: 2; opacity: .45; cursor: nwse-resize; touch-action: none; transition: opacity 120ms ease; border-right: 2px solid var(--dsw-alias-label-tertiary, #94a3b8); border-bottom: 2px solid var(--dsw-alias-label-tertiary, #94a3b8); border-bottom-right-radius: 11px; }
-.um-resize:hover, .um-resize-active { opacity: 1; }
 `
 
 return {
@@ -995,28 +628,25 @@ return {
       ctx.effect(() => locale.register('dsh-plan-spend', { zh: ZH_DICT, en: EN_DICT }), 'dsh-plan-spend: dictionaries')
     }
     const t = locale ? locale.bind('dsh-plan-spend') : ((key) => key)
-    const store = makeMeterStore()
 
     const slots = ctx.get('slots')
     if (slots) {
-      // The sidebar clips its own overflow, so the trigger and the panel are
-      // separate registrations: the trigger in the sidebar's action row, the
-      // panel in the frame-wide overlay beside that column.
-      slots.inject('sidebar.footer.action', () => slots.register({
-        name: 'sidebar.footer.action',
-        id: 'dsh-plan-spend',
-        order: UM_TRIGGER_ORDER,
-      }, (props) => React.createElement(UsageTrigger, {
-        t,
-        store,
-        wide: props ? props.wide : true,
-      })))
+      // One id, two seats: the navigation row and the keyed page it selects.
+      // Selecting the row therefore swaps the conversation out for the page
+      // instead of floating over it, exactly like the shipped rows beside it.
+      slots.inject('main', () => slots.register({
+        name: 'main',
+        key: UM_PANEL_ID,
+        locale: 'dsh-plan-spend',
+      }, UsagePage))
 
-      slots.inject('shell.overlay', () => slots.register({
-        name: 'shell.overlay',
-        id: 'dsh-plan-spend',
-        order: UM_PANEL_ORDER,
-      }, () => React.createElement(UsagePanel, { t, store })))
+      slots.inject('sidebar.panellist', () => slots.register({
+        name: 'sidebar.panellist',
+        id: UM_PANEL_ID,
+        order: UM_NAV_ORDER,
+        label: () => t('button.label'),
+        locale: 'dsh-plan-spend',
+      }, UsageIcon))
     }
 
     ctx.effect(() => styles.insert(UM_CSS), 'dsh-plan-spend: styles')
