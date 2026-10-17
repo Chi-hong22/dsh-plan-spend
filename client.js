@@ -136,11 +136,7 @@ function readStoredSize() {
   // An unreadable current value must reset the panel, not resurrect the old
   // key: otherwise clearing `dsh-plan-spend.size` would stop working.
   if (hasStoredKey(UM_SIZE_KEY)) return validSize(readStoredJson(UM_SIZE_KEY))
-  const legacy = validSize(readStoredJson(UM_LEGACY_SIZE_KEY))
-  // Adopt the pre-rename value under the new key; the mount effect then drops the
-  // old one, so clearing the key to reset the panel keeps working.
-  if (legacy) writeStoredJson(UM_SIZE_KEY, legacy)
-  return legacy
+  return validSize(readStoredJson(UM_LEGACY_SIZE_KEY))
 }
 
 function formatCountdown(target, now) {
@@ -663,9 +659,14 @@ function UsagePanel(props) {
     setRevision(store.revision())
   }), [store])
 
-  // The manual-position feature is gone and the size key was renamed; drop both
-  // leftovers once (the size itself was already adopted in readStoredSize).
+  // The manual-position feature is gone and the size key was renamed; adopt a
+  // pre-rename size under the new key once, then drop both leftovers. The read
+  // above stays a pure lookup, so clearing the new key still resets the panel.
   React.useEffect(() => {
+    if (!hasStoredKey(UM_SIZE_KEY)) {
+      const legacy_size = validSize(readStoredJson(UM_LEGACY_SIZE_KEY))
+      if (legacy_size) writeStoredJson(UM_SIZE_KEY, legacy_size)
+    }
     dropStoredKey(UM_LEGACY_POSITION_KEY)
     dropStoredKey(UM_LEGACY_SIZE_KEY)
   }, [])
@@ -1072,17 +1073,13 @@ return {
   inject: ['slots', 'locale'],
   apply(ctx) {
     const locale = ctx.get('locale')
-    // Unique per-apply namespace: the locale registry is process-wide and a
-    // stale registration of the stable name would throw ("already has locale").
-    // register() returns nothing (checked against dsh-client-locale's client
-    // half), so the effect has no disposer to hand back; the unique name is the
-    // only thing that keeps a reload usable.
-    const ns = 'dsh-plan-spend.' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6)
+    // One stable namespace: register hands back an idempotent disposer, so the
+    // effect cleanup leaves no empty namespace in the process-wide registry.
+    // Both languages go in a single call so a reload cannot half-apply them.
     if (locale) {
-      ctx.effect(() => locale.register(ns, 'zh', ZH_DICT), 'dsh-plan-spend: zh dict')
-      ctx.effect(() => locale.register(ns, 'en', EN_DICT), 'dsh-plan-spend: en dict')
+      ctx.effect(() => locale.register('dsh-plan-spend', { zh: ZH_DICT, en: EN_DICT }), 'dsh-plan-spend: dictionaries')
     }
-    const t = locale ? locale.bind(ns) : ((key) => key)
+    const t = locale ? locale.bind('dsh-plan-spend') : ((key) => key)
     const store = makeMeterStore()
 
     const slots = ctx.get('slots')
