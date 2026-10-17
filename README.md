@@ -122,7 +122,8 @@ The plugin registers two seats:
 - **`sidebar.panellist`** (id `dsh-plan-spend`, order 20): the row. That seat is
   the sidebar's own navigation list, so the shell draws the button, its glyph
   box, its label, its active state and its collapsed rail; the entry only renders
-  the shipped **16px** gauge glyph (`{ size, active }`) and adds no pixels of its
+  the gauge glyph at the size the shell hands down — **16px** on the sidebar,
+  **18px** on the collapsed rail (`{ size, active }`) — and adds no pixels of its
   own. Clicking the row would normally make the shell select `dsh-plan-spend` as
   a main panel and throw, because none is registered, so the glyph stops the
   click on the row element before React's delegated handler sees it and toggles
@@ -138,8 +139,10 @@ the conversation body instead of the workspace: the first
 `[data-conversation-content]` beside the sidebar is the scroll area that sits
 directly below the conversation header and its dialog/trajectory tabs, so the
 panel starts 10px below *that* top and never covers the header or the tabs. With
-no conversation on screen it falls back to the column's own top. A sidebar width
-change or a layout change re-measures.
+no conversation on screen it falls back to the column's own top. It re-measures
+when it opens, when the overlay resizes, and whenever that body changes size: a
+header that grows as the tabs appear pushes the panel down with the body instead
+of leaving it over the header.
 
 **Dismissal**: the row again, the panel's `×`, `Esc`, or a press anywhere
 outside the panel all close it.

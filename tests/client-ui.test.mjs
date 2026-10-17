@@ -1,5 +1,5 @@
 /**
- * Behaviour tests for the client half: the sidebar trigger and the panel.
+ * Behaviour tests for the client half: the sidebar navigation row and the panel.
  *
  * The client body is loaded exactly as the browser bundle loads it — the bare
  * function body from `client.body.js`, invoked with React and `styles` — and
@@ -14,9 +14,9 @@
  * the placement measurement feed the panel geometry.
  *
  * Covered: both slot contracts, the open/close path, the placement rule that
- * keeps the panel outside the sidebar column, the rail (compact) trigger, and
- * the resize grip's corner, sign, bounds and persistence. Layout, paint and CSS
- * are not observable here.
+ * keeps the panel outside the sidebar column and below the conversation header,
+ * the rail's 18px glyph, and the resize grip's corner, sign, bounds and
+ * persistence. Layout, paint and CSS are not observable here.
  */
 import { readFileSync } from 'node:fs'
 import { test } from 'node:test'
@@ -137,6 +137,38 @@ function createDocumentStub() {
     },
   }
   return doc
+}
+
+/**
+ * A ResizeObserver stand-in: it records what the panel watches and lets a test
+ * deliver the notification a browser sends when a watched box changes size.
+ */
+function installResizeObserver() {
+  const previous = globalThis.ResizeObserver
+  const observers = []
+  class Stub {
+    constructor(callback) {
+      this.callback = callback
+      this.targets = new Set()
+      observers.push(this)
+    }
+    observe(target) { this.targets.add(target) }
+    unobserve(target) { this.targets.delete(target) }
+    disconnect() { this.targets.clear() }
+  }
+  globalThis.ResizeObserver = Stub
+  return {
+    /** Delivers the notification a browser sends when `target` changes size. */
+    flush(target) {
+      for (const observer of observers) {
+        if (observer.targets.has(target)) observer.callback([{ target }], observer)
+      }
+    },
+    restore() {
+      if (previous === undefined) delete globalThis.ResizeObserver
+      else globalThis.ResizeObserver = previous
+    },
+  }
 }
 
 /**
@@ -327,10 +359,16 @@ function mountPlugin(storage, dom = createSidebarDom(), options = {}) {
     },
     /** Puts a conversation body on screen, as the shell does below its header. */
     installConversation({ left = 280, top = 96 } = {}) {
+      const box = { left, top }
       doc.conversationBodies.length = 0
       doc.conversationBodies.push({
-        getBoundingClientRect: () => ({ left, top, right: FRAME.right, bottom: FRAME.bottom, width: FRAME.right - left, height: FRAME.bottom - top }),
+        getBoundingClientRect: () => ({ left: box.left, top: box.top, right: FRAME.right, bottom: FRAME.bottom, width: FRAME.right - box.left, height: FRAME.bottom - box.top }),
       })
+      return {
+        element: doc.conversationBodies[0],
+        /** Moves the body the way a header that grows with the tab strip does. */
+        move({ top: nextTop = box.top, left: nextLeft = box.left } = {}) { box.top = nextTop; box.left = nextLeft },
+      }
     },
     /** Clicks the sidebar row, which is also the panel's trigger. */
     clickRow() {
@@ -491,6 +529,28 @@ test('the panel top edge lands below the conversation tabs, not beside the heade
   assert.equal(style.left, '290px', 'the column is still the horizontal anchor')
   // The panel never grows past the layer: 800 - top (106) - edge margin (8).
   assert.equal(panelOf(harness).props.style.maxHeight, '686px')
+})
+
+test('the panel re-anchors when the conversation body moves under it', () => {
+  const harness = mountPlugin(createStorage())
+  const body = harness.installConversation({ top: 96 })
+  harness.installDom()
+  harness.settle()
+  const observer = installResizeObserver()
+  try {
+    harness.openPanel()
+    assert.equal(anchorOf(harness).props.style.top, '106px', 'the body top (96) plus the gap (10)')
+
+    // The tab strip appears with the first message and pushes the body down,
+    // which is the layout change the panel has to follow.
+    body.move({ top: 128 })
+    observer.flush(body.element)
+    harness.settle()
+
+    assert.equal(anchorOf(harness).props.style.top, '138px', 'the body top (128) plus the gap (10)')
+  } finally {
+    observer.restore()
+  }
 })
 
 test('closing from the header hides the panel', () => {

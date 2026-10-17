@@ -67,7 +67,7 @@ const UM_DEFAULT_SIZE = { width: 330, height: 360 }
 const UM_EDGE_MARGIN_PX = 8
 const UM_PANEL_GAP_PX = 10
 const UM_RESIZE_THRESHOLD_PX = 3
-/** The row's place among the shipped sidebar rows, which start at 10. */
+/** The row's place in the sidebar's navigation list. */
 const UM_NAV_ORDER = 20
 const UM_PANEL_ORDER = 30
 /** The shipped sidebar glyph size; the row is one of the sidebar's own rows. */
@@ -352,20 +352,34 @@ function makeMeterStore() {
 }
 
 /**
- * The top of the conversation's own content region. The shell renders the
- * conversation body as a sibling right below the conversation header, and that
- * header carries the dialog/trajectory tabs, so the body's top edge is exactly
- * "below the tabs" without depending on the tab strip's markup.
+ * The conversation's own content region, as the element to watch and the top
+ * edge to anchor to. The shell renders the body as a sibling right below the
+ * conversation header, and that header carries the dialog/trajectory tabs, so
+ * the body's top edge is exactly "below the tabs" without depending on the tab
+ * strip's markup.
  */
-function conversationTop(columnRect) {
+function conversationBody(columnRect) {
   if (typeof document === 'undefined' || !document.querySelectorAll) return null
   for (const body of document.querySelectorAll('[data-conversation-content]')) {
     const rect = body.getBoundingClientRect()
     // Subagents can put more conversations on screen; take the first one that
     // sits beside the sidebar rather than inside it.
-    if (rect.width > 0 && rect.height > 0 && rect.left >= columnRect.right - 1) return rect.top
+    if (rect.width > 0 && rect.height > 0 && rect.left >= columnRect.right - 1) return { element: body, top: rect.top }
   }
   return null
+}
+
+/**
+ * The frame-level column that holds the row. Both the placement and the watch
+ * on the conversation body climb to it, so it is defined once.
+ */
+function columnOf(buttonEl, layerEl) {
+  if (!buttonEl || !layerEl) return null
+  const frame = layerEl.parentElement
+  const boundary = frame || layerEl
+  let column = buttonEl
+  while (column.parentElement && column.parentElement !== boundary) column = column.parentElement
+  return column
 }
 
 /**
@@ -379,13 +393,11 @@ function measurePlacement(buttonEl, layerEl) {
   const buttonRect = buttonEl.getBoundingClientRect()
   if (buttonRect.width === 0 && buttonRect.height === 0) return null
   const layerRect = layerEl.getBoundingClientRect()
-  const frame = layerEl.parentElement
-  const boundary = frame || layerEl
-  let column = buttonEl
-  while (column.parentElement && column.parentElement !== boundary) column = column.parentElement
+  const column = columnOf(buttonEl, layerEl)
+  if (!column) return null
   const columnRect = column.getBoundingClientRect()
-  const contentTop = conversationTop(columnRect)
-  const anchorTop = contentTop === null ? columnRect.top : Math.max(columnRect.top, contentTop)
+  const body = conversationBody(columnRect)
+  const anchorTop = body === null ? columnRect.top : Math.max(columnRect.top, body.top)
   const left = Math.round(Math.max(0, columnRect.right - layerRect.left + UM_PANEL_GAP_PX))
   const top = Math.round(Math.max(0, anchorTop - layerRect.top + UM_PANEL_GAP_PX))
   return {
@@ -712,25 +724,39 @@ function UsagePanel(props) {
     }
   }, [open, store])
 
-  // Re-measure on open, on a sidebar width change, and on a frame resize.
+  // Re-measure on open, on a frame resize, and on a conversation body change.
   React.useEffect(() => {
     if (!open) return undefined
     const layerEl = rootRef.current ? rootRef.current.offsetParent : null
     if (!layerEl) return undefined
+    let watchedBody = null
+    let observer = null
     const measure = () => {
-      const next = measurePlacement(store.button(), layerEl)
-      if (next) setPlacement((current) => (samePlacement(current, next) ? current : next))
+      const button = store.button()
+      const next = measurePlacement(button, layerEl)
+      if (!next) return
+      setPlacement((current) => (samePlacement(current, next) ? current : next))
+      // A header that grows when the tabs appear, or a session switch, moves the
+      // body the panel is anchored to; a replaced body stops reporting changes,
+      // so the watch follows whichever body the placement just measured.
+      if (!observer) return
+      const column = columnOf(button, layerEl)
+      const body = column === null ? null : conversationBody(column.getBoundingClientRect())
+      const element = body === null ? null : body.element
+      if (element === watchedBody) return
+      if (watchedBody) observer.unobserve(watchedBody)
+      watchedBody = element
+      if (element) observer.observe(element)
     }
+    if (typeof ResizeObserver !== 'undefined') observer = new ResizeObserver(measure)
     measure()
-    // The sidebar rows may still be settling when the panel first opens, and a
-    // layer-only ResizeObserver never sees an internal row shift; one frame later
-    // the geometry is final, so the anchor lands exactly on the button.
+    // The sidebar rows may still be settling when the panel first opens; one
+    // frame later the geometry is final, so the anchor lands exactly on the row.
     const frame = typeof requestAnimationFrame === 'function' ? requestAnimationFrame(measure) : null
     const cancel = () => {
       if (frame !== null && typeof cancelAnimationFrame === 'function') cancelAnimationFrame(frame)
     }
-    if (typeof ResizeObserver === 'undefined') return cancel
-    const observer = new ResizeObserver(measure)
+    if (!observer) return cancel
     observer.observe(layerEl)
     return () => { observer.disconnect(); cancel() }
   }, [open, revision, store])
@@ -907,7 +933,6 @@ function UsagePanel(props) {
 
 const ZH_DICT = {
   'button.label': '用量',
-  'button.title': '查看套餐用量',
   'panel.title': '套餐用量详细',
   'panel.refresh': '刷新',
   'panel.close': '关闭',
@@ -949,7 +974,6 @@ const ZH_DICT = {
 
 const EN_DICT = {
   'button.label': 'Usage',
-  'button.title': 'View plan usage',
   'panel.title': 'Plan usage',
   'panel.refresh': 'Refresh',
   'panel.close': 'Close',
