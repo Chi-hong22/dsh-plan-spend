@@ -31,6 +31,9 @@ test('the plugin manager can read a localized name and description for both lang
   }
   assert.equal(titles.size, LANGUAGES.length, 'each language names the plugin in its own words')
   assert.equal(descriptions.size, LANGUAGES.length, 'each language describes the plugin in its own words')
+  // English deliberately shows the package's own name, so a future rename has to
+  // touch this file as well instead of silently drifting from package.json.
+  assert.equal(metaOf('en').title, pkg.name.split('/').pop(), 'the English name is the package name')
 })
 
 test('the published file list carries the locale folder', () => {

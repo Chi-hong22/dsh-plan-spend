@@ -1,6 +1,6 @@
 {
   "meta": {
-    "title": "Plan Spend",
+    "title": "dsh-plan-spend",
     "description": "Wallet balances, quota windows and DeepSeek peak/off-peak pricing in the sidebar."
   }
 }
