@@ -32,7 +32,8 @@
     "client.js",
     "client.body.js",
     "cordis.patch.yml",
-    "scripts/build-client.mjs"
+    "scripts/build-client.mjs",
+    "scripts/render-client.mjs"
   ],
   "license": "MIT"
 }
