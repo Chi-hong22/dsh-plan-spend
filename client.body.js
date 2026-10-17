@@ -69,6 +69,11 @@ function clamp(value, min, max) {
   return Math.min(Math.max(value, min), Math.max(min, max))
 }
 
+/** The box the measured anchor allows, or null before the first measure. */
+function placementBounds(placement) {
+  return placement ? { width: placement.maxWidth, height: placement.maxHeight } : null
+}
+
 function readStoredJson(key) {
   try {
     if (typeof localStorage === 'undefined') return null
@@ -265,10 +270,8 @@ function failureText(failure, t) {
   if (!failure) return ''
   if (failure.errorCode === 'timeout') return t('error.timeout')
   if (failure.errorCode === 'network') return t('error.network')
-  if (failure.errorCode === 'http') {
-    return Number.isFinite(failure.status)
-      ? t('error.http').replace('{status}', String(failure.status))
-      : t('error.httpUnknown')
+  if (failure.errorCode === 'http' && Number.isFinite(failure.status)) {
+    return t('error.http').replace('{status}', String(failure.status))
   }
   return typeof failure.error === 'string' ? failure.error : ''
 }
@@ -624,7 +627,7 @@ function UsagePanel(props) {
   const resizeRef = React.useRef(null)
   // Only the newest load may publish: the 60s tick, a manual refresh and a
   // reopening can overlap, and an older response must not overwrite a newer one.
-  const requestSeq = React.useRef(0)
+  const request_seq = React.useRef(0)
 
   React.useEffect(() => store.subscribe(() => {
     setOpen(store.isOpen())
@@ -639,8 +642,8 @@ function UsagePanel(props) {
   }, [])
 
   const load = React.useCallback((force) => {
-    const request = requestSeq.current + 1
-    requestSeq.current = request
+    const request = request_seq.current + 1
+    request_seq.current = request
     setState((previous) => ({ ...previous, phase: 'loading' }))
     // One source: the host half reads both routes and decides which one the
     // DeepSeek card speaks for, so this half only renders what it is told.
@@ -664,10 +667,10 @@ function UsagePanel(props) {
       })
       .then(
         (data) => {
-          if (request === requestSeq.current) setState({ phase: 'ready', data, error: null })
+          if (request === request_seq.current) setState({ phase: 'ready', data, error: null })
         },
         (error) => {
-          if (request !== requestSeq.current) return
+          if (request !== request_seq.current) return
           setState((previous) => ({ ...previous, phase: 'failed', error: errorText(error, t) }))
         },
       )
@@ -780,10 +783,9 @@ function UsagePanel(props) {
     if (!drag.moved && Math.abs(dx) < UM_RESIZE_THRESHOLD_PX && Math.abs(dy) < UM_RESIZE_THRESHOLD_PX) return
     drag.moved = true
     setResizing(true)
-    const maxWidth = placement ? placement.maxWidth : UM_DEFAULT_SIZE.width
-    const maxHeight = placement ? placement.maxHeight : UM_DEFAULT_SIZE.height
-    drag.width = clamp(Math.round(drag.startWidth + dx), UM_MIN_SIZE.width, Math.max(UM_MIN_SIZE.width, maxWidth))
-    drag.height = clamp(Math.round(drag.startHeight - dy), UM_MIN_SIZE.height, Math.max(UM_MIN_SIZE.height, maxHeight))
+    const bounds = placementBounds(placement) || UM_DEFAULT_SIZE
+    drag.width = clamp(Math.round(drag.startWidth + dx), UM_MIN_SIZE.width, bounds.width)
+    drag.height = clamp(Math.round(drag.startHeight - dy), UM_MIN_SIZE.height, bounds.height)
     setSize({ width: drag.width, height: drag.height })
   }
 
@@ -809,8 +811,7 @@ function UsagePanel(props) {
    */
   const onHandleKeyDown = (event) => {
     const step = event.shiftKey ? UM_KEYBOARD_RESIZE_STEP * 4 : UM_KEYBOARD_RESIZE_STEP
-    const maxWidth = placement ? placement.maxWidth : UM_DEFAULT_SIZE.width
-    const maxHeight = placement ? placement.maxHeight : UM_DEFAULT_SIZE.height
+    const bounds = placementBounds(placement) || UM_DEFAULT_SIZE
     const wanted = { width, height }
     if (event.key === 'ArrowLeft') wanted.width = width - step
     else if (event.key === 'ArrowRight') wanted.width = width + step
@@ -819,8 +820,8 @@ function UsagePanel(props) {
     else return
     event.preventDefault()
     const next = {
-      width: clamp(wanted.width, UM_MIN_SIZE.width, maxWidth),
-      height: clamp(wanted.height, UM_MIN_SIZE.height, maxHeight),
+      width: clamp(wanted.width, UM_MIN_SIZE.width, bounds.width),
+      height: clamp(wanted.height, UM_MIN_SIZE.height, bounds.height),
     }
     setSize(next)
     writeStoredJson(UM_SIZE_KEY, next)
@@ -835,9 +836,10 @@ function UsagePanel(props) {
     : { left: '64px', bottom: '16px' }
   // A stored size can predate this window's placement; clamp the box to the
   // space the layer measured so the panel never hangs past its anchor.
+  const panel_bounds = placementBounds(placement) || { width, height }
   const panelStyle = {
-    width: Math.min(width, placement ? placement.maxWidth : width) + 'px',
-    height: Math.min(height, placement ? placement.maxHeight : height) + 'px',
+    width: Math.min(width, panel_bounds.width) + 'px',
+    height: Math.min(height, panel_bounds.height) + 'px',
     maxHeight: placement ? placement.maxHeight + 'px' : undefined,
   }
 
@@ -912,7 +914,6 @@ const ZH_DICT = {
   'error.timeout': '请求超时',
   'error.network': '网络请求失败（本地服务可能未就绪）',
   'error.http': '服务端返回 HTTP {status}',
-  'error.httpUnknown': '服务端拒绝了请求',
   'panel.none': '没有已配置的服务商凭据。',
   'card.notConfigured': '未配置凭据，已跳过。',
   'card.noData': '无数据。',
@@ -955,7 +956,6 @@ const EN_DICT = {
   'error.timeout': 'The request timed out',
   'error.network': 'Network request failed (the local service may not be ready)',
   'error.http': 'The server returned HTTP {status}',
-  'error.httpUnknown': 'The server refused the request',
   'panel.none': 'No configured provider credentials.',
   'card.notConfigured': 'No credential configured; skipped.',
   'card.noData': 'No data.',
