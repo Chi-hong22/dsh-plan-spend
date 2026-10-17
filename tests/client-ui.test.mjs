@@ -1028,6 +1028,86 @@ test('an unreachable host is reported in the panel language', async () => {
   await flush()
 
   const text = panelText(harness)
-  assert.match(text, /请求未能完成/)
+  assert.match(text, /网络请求失败/)
   assert.doesNotMatch(text, /Failed to fetch/)
+})
+
+test('a coded host failure is localized from the code, not its wording', async () => {
+  const harness = mountPlugin(createStorage(), createSidebarDom(), {
+    fetch: () => Promise.resolve({
+      ok: false,
+      status: 502,
+      json: () => Promise.resolve({ error: 'HTTP 502', errorCode: 'http', status: 502 }),
+    }),
+  })
+  harness.installDom()
+  harness.settle()
+  harness.openPanel()
+  await flush()
+
+  assert.match(panelText(harness), /读取失败：服务端返回 HTTP 502/)
+})
+
+test('the same code reads in English when that is the panel language', async () => {
+  const harness = mountPlugin(createStorage(), createSidebarDom(), {
+    language: 'en',
+    fetch: () => Promise.resolve({
+      ok: false,
+      status: 502,
+      json: () => Promise.resolve({ error: 'HTTP 502', errorCode: 'http', status: 502 }),
+    }),
+  })
+  harness.installDom()
+  harness.settle()
+  harness.openPanel()
+  await flush()
+
+  assert.match(panelText(harness), /Request failed: The server returned HTTP 502/)
+})
+
+test('an unknown code falls back to the host wording', async () => {
+  const harness = mountPlugin(createStorage(), createSidebarDom(), {
+    fetch: () => Promise.resolve({
+      ok: false,
+      status: 500,
+      json: () => Promise.resolve({ error: '凭据存储不可用', errorCode: 'unknown' }),
+    }),
+  })
+  harness.installDom()
+  harness.settle()
+  harness.openPanel()
+  await flush()
+
+  assert.match(panelText(harness), /读取失败：凭据存储不可用/)
+})
+
+test('a coded card failure is localized in the card', async () => {
+  const harness = openWithSnapshot([{
+    id: 'deepseek-official',
+    displayName: 'DeepSeek 官方',
+    source: 'api-key',
+    configured: true,
+    error: 'HTTP 401',
+    errorCode: 'http',
+    status: 401,
+  }])
+  await flush()
+
+  assert.match(panelText(harness), /服务端返回 HTTP 401/)
+})
+
+test('a coded account failure is localized inside the account note', async () => {
+  const harness = openWithSnapshot([{
+    id: 'deepseek-official',
+    displayName: 'DeepSeek 官方',
+    source: 'api-key',
+    configured: true,
+    data: { kind: 'balance', label: 'balance.total', wallets: [] },
+    accountError: 'HTTP 429',
+    accountErrorCode: 'http',
+    accountErrorStatus: 429,
+  }])
+  await flush()
+
+  assert.match(panelText(harness), /账号余额读取失败：服务端返回 HTTP 429/)
 })

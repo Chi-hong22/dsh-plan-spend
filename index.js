@@ -99,7 +99,13 @@ async function fetchJson(url, headers) {
     headers: { accept: 'application/json', ...headers },
     signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
   })
-  if (!response.ok) throw new Error(`HTTP ${response.status}`)
+  if (!response.ok) {
+    const error = new Error(`HTTP ${response.status}`)
+    // The status rides along so `failureOf` can tell an upstream refusal apart
+    // from a transport failure without parsing the message.
+    error.status = response.status
+    throw error
+  }
   return response.json()
 }
 
@@ -183,13 +189,20 @@ async function describeCredential(ctx, credentialRef) {
   }
 }
 
-function failureMessage(error) {
-  if (error instanceof Error) {
-    return error.name === 'TimeoutError' || error.name === 'AbortError'
-      ? `请求超时（${REQUEST_TIMEOUT_MS} ms）`
-      : error.message
+/**
+ * Shapes a thrown value into the failure payload that travels to the client.
+ * `errorCode` is the stable part: the popup localizes known codes and falls back
+ * to `error` (this half's own Chinese wording) for anything else.
+ */
+function failureOf(error) {
+  // `AbortSignal.timeout` rejects with a DOMException, which is not an Error.
+  if (error && (error.name === 'TimeoutError' || error.name === 'AbortError')) {
+    return { error: `请求超时（${REQUEST_TIMEOUT_MS} ms）`, errorCode: 'timeout' }
   }
-  return String(error)
+  const message = error instanceof Error ? error.message : String(error)
+  if (error instanceof TypeError) return { error: message, errorCode: 'network' }
+  if (Number.isFinite(error?.status)) return { error: message, errorCode: 'http', status: error.status }
+  return { error: message, errorCode: 'unknown' }
 }
 
 /**
@@ -202,7 +215,7 @@ async function readCredentialCard(ctx, adapter, card) {
   try {
     credential = await ctx.credentials.resolve(adapter.credentialRef)
   } catch (error) {
-    return { ...card, configured: false, error: failureMessage(error) }
+    return { ...card, configured: false, ...failureOf(error) }
   }
   if (!credential?.value) return { ...card, configured: false }
   const info = await describeCredential(ctx, adapter.credentialRef)
@@ -213,7 +226,7 @@ async function readCredentialCard(ctx, adapter, card) {
   try {
     return { ...card, data: await adapter.read(credential.value) }
   } catch (error) {
-    return { ...card, error: failureMessage(error) }
+    return { ...card, ...failureOf(error) }
   }
 }
 
@@ -228,26 +241,32 @@ async function buildSnapshot(ctx) {
   const cards = await Promise.all(ADAPTERS.map(async (adapter) => {
     const card = { id: adapter.id, displayName: adapter.displayName, configured: true }
     if (adapter.source !== undefined) card.source = adapter.source
-    let accountError
+    let accountFailure
     if (adapter.readAccount !== undefined) {
       try {
         const account = await adapter.readAccount(ctx)
         if (account !== null) return { ...card, source: 'account', data: account }
       } catch (error) {
-        accountError = failureMessage(error)
+        const failure = failureOf(error)
+        accountFailure = {
+          accountError: failure.error,
+          accountErrorCode: failure.errorCode,
+          accountErrorStatus: failure.status,
+        }
       }
     }
     const fallback = await readCredentialCard(ctx, adapter, card)
-    return accountError === undefined ? fallback : { ...fallback, accountError }
+    return accountFailure === undefined ? fallback : { ...fallback, ...accountFailure }
   }))
   return { generatedAt: Date.now(), cards }
 }
 
-function sendJson(res, status, body) {
+function sendJson(res, status, body, headers = {}) {
   res.writeHead(status, {
     'content-type': 'application/json; charset=utf-8',
     'cache-control': 'no-store',
     'x-content-type-options': 'nosniff',
+    ...headers,
   })
   res.end(JSON.stringify(body))
 }
@@ -279,14 +298,14 @@ export function apply(ctx) {
     path: ROUTE,
     handler: async (req, res) => {
       if (req.method !== 'GET') {
-        sendJson(res, 405, { error: 'method not allowed' })
+        sendJson(res, 405, { error: 'method not allowed' }, { allow: 'GET' })
         return
       }
       try {
         const url = new URL(req.url ?? ROUTE, 'http://localhost')
         sendJson(res, 200, await snapshot(url.searchParams.get('refresh') === '1'))
       } catch (error) {
-        sendJson(res, 500, { error: failureMessage(error) })
+        sendJson(res, 500, failureOf(error))
       }
     },
   }), 'dsh-plan-spend: snapshot route')

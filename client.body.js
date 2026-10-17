@@ -250,12 +250,33 @@ function uncoveredHolidayYear(instant) {
   return UM_HOLIDAY_YEARS.indexOf(year) === -1 ? year : null
 }
 
+/**
+ * Locale-aware text for a failure the host described. The host sends a stable
+ * `errorCode` next to its own wording; unknown codes fall back to that wording,
+ * so an older or newer half still says something specific.
+ */
+function failureText(failure, t) {
+  if (!failure) return ''
+  if (failure.errorCode === 'timeout') return t('error.timeout')
+  if (failure.errorCode === 'network') return t('error.network')
+  if (failure.errorCode === 'http') {
+    return Number.isFinite(failure.status)
+      ? t('error.http').replace('{status}', String(failure.status))
+      : t('error.httpUnknown')
+  }
+  return typeof failure.error === 'string' ? failure.error : ''
+}
+
 /** Message text of a thrown value, without assuming it is an Error. */
 function errorText(error, t) {
   // A rejected fetch carries a bare `TypeError: Failed to fetch`; this is the
   // only layer that knows the locale, so the network case is named here.
-  if (error instanceof TypeError) return t('panel.networkError')
-  return error && error.message ? error.message : String(error)
+  if (error instanceof TypeError) return t('error.network')
+  return failureText({
+    error: error && error.message ? error.message : String(error),
+    errorCode: error && error.errorCode,
+    status: error && error.status,
+  }, t) || String(error)
 }
 
 /** Percent → accent token, so a nearly exhausted allowance reads at a glance. */
@@ -486,7 +507,7 @@ function ProviderCard(props) {
   if (!card.configured) {
     body = React.createElement('div', { className: 'um-muted' }, t('card.notConfigured'))
   } else if (card.error) {
-    body = React.createElement('div', { className: 'um-error' }, card.error)
+    body = React.createElement('div', { className: 'um-error' }, failureText(card, t))
   } else if (!card.data) {
     body = React.createElement('div', { className: 'um-muted' }, t('card.noData'))
   } else if (card.data.kind === 'balance') {
@@ -498,8 +519,15 @@ function ProviderCard(props) {
     ? t('source.account')
     : card.source === 'api-key' ? t('source.apiKey') : ''
   const hint = credentialHint(card, t)
-  const accountNote = typeof card.accountError === 'string'
-    ? t('source.accountFailed').replace('{error}', card.accountError)
+  const accountFailure = typeof card.accountError === 'string'
+    ? failureText({
+      error: card.accountError,
+      errorCode: card.accountErrorCode,
+      status: card.accountErrorStatus,
+    }, t)
+    : ''
+  const accountNote = accountFailure
+    ? t('source.accountFailed').replace('{error}', accountFailure)
     : ''
   return React.createElement('section', { className: 'um-card' + (card.configured ? '' : ' um-card-off') },
     React.createElement('h4', { className: 'um-card-title' },
@@ -611,17 +639,20 @@ function UsagePanel(props) {
     fetch(UM_ROUTE + (force ? '?refresh=1' : ''), { headers: { accept: 'application/json' } })
       .then((response) => {
         if (response.ok) return response.json()
-        // The host already names the failure (`请求超时（15000 ms）`); reading its
-        // body back keeps that instead of flattening every status to `HTTP 500`.
-        return response.json().then(
-          (body) => {
-            const reason = body && typeof body.error === 'string' ? body.error : 'HTTP ' + response.status
-            throw new Error(reason)
-          },
-          () => {
-            throw new Error('HTTP ' + response.status)
-          },
-        )
+        // The host explains the failure (`请求超时（15000 ms）`) and names it with
+        // an `errorCode`; the panel localizes the code and keeps the text only as
+        // a fallback for codes it does not know.
+        return response.json()
+          .catch(() => null)
+          .then((body) => {
+            const failure = body && typeof body === 'object' ? body : {}
+            const error = new Error(typeof failure.error === 'string' ? failure.error : 'HTTP ' + response.status)
+            // An older host sends wording without a code; keep that wording rather
+            // than flattening it to a status this half would localize.
+            error.errorCode = typeof failure.errorCode === 'string' ? failure.errorCode : undefined
+            error.status = Number.isFinite(failure.status) ? failure.status : response.status
+            throw error
+          })
       })
       .then(
         (data) => setState({ phase: 'ready', data, error: null }),
@@ -819,7 +850,10 @@ const ZH_DICT = {
   'panel.loading': '正在读取…',
   'panel.failed': '读取失败：{reason}',
   'panel.stale': '刷新失败，显示上次数据：{reason}',
-  'panel.networkError': '请求未能完成（网络中断或本地服务未就绪）',
+  'error.timeout': '请求超时',
+  'error.network': '网络请求失败（本地服务可能未就绪）',
+  'error.http': '服务端返回 HTTP {status}',
+  'error.httpUnknown': '服务端拒绝了请求',
   'panel.none': '没有已配置的服务商凭据。',
   'card.notConfigured': '未配置凭据，已跳过。',
   'card.noData': '无数据。',
@@ -859,7 +893,10 @@ const EN_DICT = {
   'panel.loading': 'Loading…',
   'panel.failed': 'Request failed: {reason}',
   'panel.stale': 'Refresh failed; showing the last values: {reason}',
-  'panel.networkError': 'The request did not finish (offline, or the local service is not ready)',
+  'error.timeout': 'The request timed out',
+  'error.network': 'Network request failed (the local service may not be ready)',
+  'error.http': 'The server returned HTTP {status}',
+  'error.httpUnknown': 'The server refused the request',
   'panel.none': 'No configured provider credentials.',
   'card.notConfigured': 'No credential configured; skipped.',
   'card.noData': 'No data.',

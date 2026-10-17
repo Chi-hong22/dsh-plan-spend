@@ -74,9 +74,10 @@ function routeHarness({ resolve, describe, account }) {
     },
     async method(method) {
       let status = null
-      const res = { writeHead(code) { status = code }, end() {} }
+      let headers = null
+      const res = { writeHead(code, sent) { status = code; headers = sent }, end() {} }
       await route.handler({ method, url: '/dsh-plan-spend/snapshot' }, res)
-      return status
+      return { status, headers }
     },
     route,
   }
@@ -164,10 +165,43 @@ test('an upstream rejection keeps the status and leaves the other card intact', 
     const snapshot = await harness.read()
 
     assert.equal(snapshot.cards[0].error, 'HTTP 401')
+    assert.equal(snapshot.cards[0].errorCode, 'http')
+    assert.equal(snapshot.cards[0].status, 401)
     assert.equal(snapshot.cards[0].data, undefined)
     assert.equal(snapshot.cards[1].data.kind, 'quota-windows')
   } finally {
     fetcher.restore()
+  }
+})
+
+test('a transport failure is named as a network failure, not a status', async () => {
+  const original = globalThis.fetch
+  globalThis.fetch = async () => { throw new TypeError('fetch failed') }
+  try {
+    const harness = routeHarness({ resolve: bothConfigured })
+    const snapshot = await harness.read()
+
+    assert.equal(snapshot.cards[0].error, 'fetch failed')
+    assert.equal(snapshot.cards[0].errorCode, 'network')
+    assert.equal(snapshot.cards[0].status, undefined)
+  } finally {
+    globalThis.fetch = original
+  }
+})
+
+test('a timed-out read is reported as a timeout', async () => {
+  const original = globalThis.fetch
+  globalThis.fetch = async () => {
+    throw new DOMException('The operation was aborted due to timeout', 'TimeoutError')
+  }
+  try {
+    const harness = routeHarness({ resolve: bothConfigured })
+    const snapshot = await harness.read()
+
+    assert.equal(snapshot.cards[0].errorCode, 'timeout')
+    assert.match(snapshot.cards[0].error, /请求超时（15000 ms）/)
+  } finally {
+    globalThis.fetch = original
   }
 })
 
@@ -213,7 +247,9 @@ test('only GET reaches the readers', async () => {
   const fetcher = stubFetch({})
   try {
     const harness = routeHarness({ resolve: bothConfigured })
-    assert.equal(await harness.method('POST'), 405)
+    const refused = await harness.method('POST')
+    assert.equal(refused.status, 405)
+    assert.equal(refused.headers.allow, 'GET')
     assert.deepEqual(fetcher.calls, [])
   } finally {
     fetcher.restore()
@@ -321,6 +357,8 @@ test('a failed account query falls back and reports the failure on the card', as
 
     assert.equal(snapshot.cards[0].source, 'api-key')
     assert.equal(snapshot.cards[0].accountError, 'HTTP 429')
+    assert.equal(snapshot.cards[0].accountErrorCode, 'http')
+    assert.equal(snapshot.cards[0].accountErrorStatus, 429)
     assert.equal(snapshot.cards[0].data.kind, 'balance')
   } finally {
     globalThis.fetch = original
@@ -341,6 +379,7 @@ test('a throwing token resolution is reported instead of failing the snapshot', 
 
     assert.equal(snapshot.cards[0].source, 'api-key')
     assert.equal(snapshot.cards[0].accountError, 'account: storage')
+    assert.equal(snapshot.cards[0].accountErrorCode, 'unknown')
     assert.equal(snapshot.cards[1].data.kind, 'quota-windows')
   } finally {
     fetcher.restore()
